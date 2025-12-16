@@ -20,6 +20,7 @@ import { PlanDrift } from './types/SystemStatus';
 import { Blindspots } from './types/SystemStatus';
 import { SystemStatus } from './types/SystemStatus';
 import { FAQItem } from './types/SystemStatus';
+import { RulesInstaller, RuleInstallationResult } from './api/RulesInstaller';
 
 // TODO: CycleResult n'est pas exporté par CognitiveScheduler
 interface CycleResult {
@@ -51,7 +52,8 @@ export class KernelAPI {
 
     constructor(
         private bridge: KernelBridge,
-        private logger: ILogger
+        private logger: ILogger,
+        private workspaceRoot: string
     ) {
         // Listen to bridge messages for query responses
         this.bridge.on('message', (msg: any) => {
@@ -503,6 +505,49 @@ export class KernelAPI {
         } catch (error) {
             this.logger.error(`[KernelAPI] Failed to get FAQ: ${error}`);
             return [];
+        }
+    }
+
+    /**
+     * Install RL4 governance rules for LLM calibration
+     */
+    async installRules(): Promise<RuleInstallationResult> {
+        try {
+            const rulesInstaller = new RulesInstaller(this.workspaceRoot);
+            return await rulesInstaller.installRules();
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to install rules: ${error}`);
+            return {
+                success: false,
+                rulesInstalled: [],
+                errors: [`Installation error: ${error}`]
+            };
+        }
+    }
+
+    /**
+     * Verify RL4 rules installation status
+     */
+    async verifyRulesInstallation(): Promise<{ installed: string[]; missing: string[] }> {
+        try {
+            const rulesInstaller = new RulesInstaller(this.workspaceRoot);
+            return await rulesInstaller.verifyInstallation();
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to verify rules installation: ${error}`);
+            return { installed: [], missing: ['RL4.Agent.System.mdc', 'RL4.Core.mdc'] };
+        }
+    }
+
+    /**
+     * Check if rules need update
+     */
+    async rulesNeedUpdate(): Promise<boolean> {
+        try {
+            const rulesInstaller = new RulesInstaller(this.workspaceRoot);
+            return await rulesInstaller.needsUpdate();
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to check rules update status: ${error}`);
+            return true; // Err on side of caution
         }
     }
 

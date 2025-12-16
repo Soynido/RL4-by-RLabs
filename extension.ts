@@ -77,7 +77,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // Step 4: Initialize kernel bridge and API
         kernelBridge = new KernelBridge(context.extensionPath, logger);
-        kernelAPI = new KernelAPI(kernelBridge, logger);
+        kernelAPI = new KernelAPI(kernelBridge, logger, workspaceRoot);
 
         // Step 5: Start kernel process via bridge
         await kernelBridge.start();
@@ -127,6 +127,18 @@ export async function activate(context: vscode.ExtensionContext) {
         activityBarProvider = new RL4ActivityBarProvider(context, kernelAPI);
         activityBarProvider.register();
         context.subscriptions.push(activityBarProvider);
+
+        // Install RL4 governance rules for LLM calibration
+        try {
+            const rulesResult = await kernelAPI.installRules();
+            if (rulesResult.success) {
+                outputChannel.appendLine(`[${new Date().toISOString()}] ✅ RL4 governance rules installed: ${rulesResult.rulesInstalled.join(', ')}`);
+            } else {
+                outputChannel.appendLine(`[${new Date().toISOString()}] ⚠️ Rules installation failed: ${rulesResult.errors.join(', ')}`);
+            }
+        } catch (error: any) {
+            outputChannel.appendLine(`[${new Date().toISOString()}] ⚠️ Failed to install RL4 rules: ${error.message}`);
+        }
 
         // Register workspace event handlers
         registerWorkspaceEventHandlers(context);
