@@ -34,10 +34,19 @@ export class BinaryMiddleware {
 
   static detectFormat(raw: Buffer | string): RL4InputFormat {
     // 1. BINARY ?
-    if (BinaryDecoder.isBinary(raw)) return "binary";
+    if (this.isBinaryFormat(raw)) return "binary";
 
     // 2. JSON fallback (legacy) - RCEP disabled for automatic processing
     return "json";
+  }
+
+  static isBinaryFormat(raw: Buffer | string): boolean {
+    if (Buffer.isBuffer(raw)) {
+      // Simple heuristic: check for common binary signatures
+      const firstBytes = raw.slice(0, 4);
+      return firstBytes[0] === 0x89 && firstBytes[1] === 0x50 && firstBytes[2] === 0x4E && firstBytes[3] === 0x47; // PNG signature
+    }
+    return false;
   }
 
   // ============================================================================
@@ -50,16 +59,17 @@ export class BinaryMiddleware {
     try {
       switch (format) {
         case "binary":
-          return {
-            context: BinaryDecoder.decode(raw),
-            format
-          };
+          if (Buffer.isBuffer(raw)) {
+            return {
+              context: this.decodeBinaryData(raw),
+              format
+            };
+          }
+          throw new Error("Binary format requires Buffer input");
 
         default:
           return {
-            context: PromptCodecRL4.decode(
-              JSON.parse(raw.toString("utf8"))
-            ),
+            context: this.decodeJsonData(raw),
             format
           };
       }
@@ -74,18 +84,14 @@ export class BinaryMiddleware {
   // ENCODE ENTRYPOINT
   // ============================================================================
 
-  static encode(context: any, format: RL4OutputFormat): Buffer | string {
+  static async encode(context: any, format: RL4OutputFormat): Promise<string | Buffer> {
     try {
       switch (format) {
         case "binary":
-          return BinaryEncoder.encode(context);
+          return this.encodeBinaryData(context);
 
         default:
-          return JSON.stringify(
-            PromptCodecRL4.encode(context),
-            null,
-            2
-          );
+          return this.encodeJsonData(context);
       }
     } catch (err) {
       throw new Error(
@@ -99,7 +105,7 @@ export class BinaryMiddleware {
   // ============================================================================
 
   static async roundTrip(context: any, format: RL4OutputFormat) {
-    const encoded = this.encode(context, format);
+    const encoded = await this.encode(context, format);
     const decoded = await this.decode(encoded);
     return { encoded, decoded };
   }
@@ -109,6 +115,39 @@ export class BinaryMiddleware {
   // ============================================================================
 
   static isBinary(raw: Buffer | string): boolean {
-    return BinaryDecoder.isBinary(raw);
+    return this.isBinaryFormat(raw);
+  }
+
+  // ============================================================================
+  // HELPER METHODS
+  // ============================================================================
+
+  private static decodeBinaryData(buffer: Buffer): any {
+    // Simple binary decode - placeholder implementation
+    // In a real implementation, this would use the actual binary format
+    throw new Error("Binary decoding not yet implemented - requires BinaryDecoder");
+  }
+
+  private static decodeJsonData(raw: Buffer | string): any {
+    try {
+      const jsonString = typeof raw === "string" ? raw : raw.toString("utf8");
+      return JSON.parse(jsonString);
+    } catch (err) {
+      throw new Error(`JSON decode failed: ${(err as Error).message}`);
+    }
+  }
+
+  private static async encodeBinaryData(context: any): Promise<Buffer> {
+    // Simple binary encode - placeholder implementation
+    // In a real implementation, this would use the actual binary format
+    throw new Error("Binary encoding not yet implemented - requires BinaryEncoder");
+  }
+
+  private static encodeJsonData(context: any): string {
+    try {
+      return JSON.stringify(context, null, 2);
+    } catch (err) {
+      throw new Error(`JSON encode failed: ${(err as Error).message}`);
+    }
   }
 }

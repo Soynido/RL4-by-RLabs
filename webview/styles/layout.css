@@ -1,0 +1,46 @@
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+.webview-frame {
+  max-width: 900px;
+  margin: 0 auto;
+  border-radius: var(--radius-frame);
+  border: 1px solid var(--border-hover);
+  background: var(--bg-secondary);
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+  position: relative;
+}
+
+.frame-content {
+  position: relative;
+  z-index: 1;
+}
+
+.content {
+  padding: 24px;
+  min-height: 500px;
+}
+
+.view {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+
+.view.active {
+  display: block;
+}
+
+.card {
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  backdrop-filter: blur(20px);
+  padding: 20px;
+  box-shadow: inset 0 0 35px rgba(255, 255, 255, 0.03);
+}
+

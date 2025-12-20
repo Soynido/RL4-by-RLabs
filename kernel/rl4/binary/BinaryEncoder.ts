@@ -41,7 +41,7 @@ export class BinaryEncoder {
     const cborBuf = useCBOR ? Buffer.from(cborEncode(context)) : jsonBuf;
 
     // 3. Brotli compression
-    let payload = cborBuf;
+    let payload: Buffer = cborBuf;
     if (useBrotli) {
       payload = await brotliCompress(cborBuf);
     }

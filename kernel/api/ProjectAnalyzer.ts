@@ -586,7 +586,16 @@ export class ProjectAnalyzer {
         if (risks.complexityRisk === 'high') weaknesses.push('High code complexity');
 
         const highPriorityRecs = recommendations.filter(r => r.priority === 'high').length;
-        const priority = highPriorityRecs > 3 ? 'high' : highPriorityRecs > 0 ? 'medium' : 'low';
+
+        // Normalize priority to strict union type
+        const normalizePriority = (p: string): "low" | "medium" | "high" => {
+            if (p === "high" || p === "medium" || p === "low") return p;
+            return "medium";
+        };
+
+        const priority = normalizePriority(
+            highPriorityRecs > 3 ? 'high' : highPriorityRecs > 0 ? 'medium' : 'low'
+        );
 
         return {
             overallScore,
@@ -780,7 +789,7 @@ export class ProjectAnalyzer {
         return 'low'; // Would analyze cyclomatic complexity, file sizes, etc.
     }
 
-    private assessCouplingRisk(metadata: ProjectType): 'low' | 'medium' | 'high' {
+    private assessCouplingRisk(metadata: ProjectMetadata): 'low' | 'medium' | 'high' {
         return 'low'; // Would analyze import dependencies, coupling metrics
     }
 

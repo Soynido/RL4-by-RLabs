@@ -49,12 +49,15 @@ interface QueryResponse {
 export class KernelAPI {
     private pendingQueries: Map<number, { resolve: (value: any) => void; reject: (error: any) => void }> = new Map();
     private querySeq: number = 0;
+    private extensionPath?: string;
 
     constructor(
         private bridge: KernelBridge,
         private logger: ILogger,
-        private workspaceRoot: string
+        private workspaceRoot: string,
+        extensionPath?: string
     ) {
+        this.extensionPath = extensionPath;
         // Listen to bridge messages for query responses
         this.bridge.on('message', (msg: any) => {
             if (msg.type === 'query_reply' && msg.query_seq !== undefined) {
@@ -74,9 +77,22 @@ export class KernelAPI {
     /**
      * Send query to kernel process and wait for reply
      */
-    private async query(type: string, payload?: any, timeout: number = 5000): Promise<any> {
+    public async query(type: string, payload?: any, timeout: number = 5000): Promise<any> {
         if (!this.bridge.isRunning()) {
             throw new Error('Kernel is not running');
+        }
+
+        // Wait for kernel to be ready before sending query (max 30s wait)
+        const maxWaitTime = 30000;
+        const checkInterval = 100;
+        const startTime = Date.now();
+        
+        while (!this.bridge.isReady && (Date.now() - startTime) < maxWaitTime) {
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+        }
+
+        if (!this.bridge.isReady) {
+            throw new Error('Kernel not ready after 30s wait');
         }
 
         const seq = ++this.querySeq;
@@ -513,7 +529,7 @@ export class KernelAPI {
      */
     async installRules(): Promise<RuleInstallationResult> {
         try {
-            const rulesInstaller = new RulesInstaller(this.workspaceRoot);
+            const rulesInstaller = new RulesInstaller(this.workspaceRoot, this.extensionPath);
             return await rulesInstaller.installRules();
         } catch (error) {
             this.logger.error(`[KernelAPI] Failed to install rules: ${error}`);
@@ -573,6 +589,64 @@ export class KernelAPI {
                 lastCheck: '',
                 version: '1.0.0'
             };
+        }
+    }
+
+    /**
+     * Get timeline range (first and last cycle dates)
+     */
+    async getTimelineRange(): Promise<{ firstCycleIso: string; lastCycleIso: string }> {
+        try {
+            const data = await this.query('get_timeline_range');
+            return data || {
+                firstCycleIso: new Date().toISOString(),
+                lastCycleIso: new Date().toISOString()
+            };
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to get timeline range: ${error}`);
+            return {
+                firstCycleIso: new Date().toISOString(),
+                lastCycleIso: new Date().toISOString()
+            };
+        }
+    }
+
+    /**
+     * Mark onboarding as complete
+     */
+    async markOnboardingComplete(mode: 'new' | 'existing'): Promise<boolean> {
+        try {
+            const data = await this.query('mark_onboarding_complete', { mode });
+            return data.success || false;
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to mark onboarding complete: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Reset onboarding (for testing)
+     */
+    async resetOnboarding(): Promise<boolean> {
+        try {
+            const data = await this.query('reset_onboarding');
+            return data.success || false;
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to reset onboarding: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Get onboarding status
+     */
+    async getOnboardingStatus(): Promise<{ complete: boolean; mode?: string; firstUseMode?: string }> {
+        try {
+            const data = await this.query('get_onboarding_status');
+            return data || { complete: false };
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to get onboarding status: ${error}`);
+            return { complete: false };
         }
     }
 }

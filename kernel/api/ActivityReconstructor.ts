@@ -40,7 +40,8 @@ export enum EventType {
     BUILD_EVENT = 'build_event',
     TEST_EVENT = 'test_event',
     EDITOR_SESSION = 'editor_session',
-    FOCUS_CHANGE = 'focus_change'
+    FOCUS_CHANGE = 'focus_change',
+    ADR_ADDED = 'adr_added'
 }
 
 export enum EventSource {
@@ -49,7 +50,8 @@ export enum EventSource {
     KERNEL = 'kernel',
     TERMINAL = 'terminal',
     EDITOR = 'editor',
-    BUILD_SYSTEM = 'build'
+    BUILD_SYSTEM = 'build',
+    ADR_PARSER = 'adr_parser'
 }
 
 export interface Task {
@@ -166,10 +168,12 @@ export class ActivityReconstructor extends EventEmitter {
     private focusAreas: Map<string, FocusArea> = new Map();
     private anomalies: ActivityAnomaly[] = [];
     private isReconstructing = false;
+    private terminalEventsPath: string;
 
     constructor(workspaceRoot: string) {
         super();
         this.workspaceRoot = workspaceRoot;
+        this.terminalEventsPath = path.join(this.workspaceRoot, '.reasoning_rl4', 'terminal-events.jsonl');
     }
 
     /**
@@ -206,7 +210,15 @@ export class ActivityReconstructor extends EventEmitter {
 
         try {
             // Use provided events or buffer
-            const events = eventStream || [...this.eventBuffer];
+            let events = eventStream || [...this.eventBuffer];
+
+            // Enrich with terminal events (append-only) within the observed window
+            if (events.length > 0) {
+                const startTs = events[0].timestamp;
+                const endTs = events[events.length - 1].timestamp;
+                const terminalEvents = this.readTerminalEventsBetween(startTs, endTs);
+                events = events.concat(terminalEvents);
+            }
 
             if (events.length === 0) {
                 return this.createEmptyResult();
@@ -762,6 +774,45 @@ export class ActivityReconstructor extends EventEmitter {
         // Consistency based on regular work patterns
         // Simplified implementation
         return 75;
+    }
+
+    /**
+     * Read terminal-events.jsonl between two timestamps and map to ActivityEvent
+     */
+    private readTerminalEventsBetween(start: Date, end: Date): ActivityEvent[] {
+        const events: ActivityEvent[] = [];
+        try {
+            if (!fs.existsSync(this.terminalEventsPath)) {
+                return events;
+            }
+            const startMs = start.getTime();
+            const endMs = end.getTime();
+            const lines = fs.readFileSync(this.terminalEventsPath, 'utf-8').split('\n').filter(Boolean);
+            for (const line of lines) {
+                try {
+                    const evt = JSON.parse(line);
+                    const ts = new Date(evt.timestamp).getTime();
+                    if (isNaN(ts) || ts < startMs || ts > endMs) continue;
+                    const mapped: ActivityEvent = {
+                        id: this.generateEventId(),
+                        timestamp: new Date(ts),
+                        type: EventType.TERMINAL_COMMAND,
+                        source: EventSource.TERMINAL,
+                        data: {
+                            command: evt.command || evt.metadata?.command || evt.type,
+                            exitCode: evt.exitCode ?? evt.metadata?.exitCode ?? null,
+                            raw: evt
+                        }
+                    };
+                    events.push(mapped);
+                } catch {
+                    // skip malformed lines
+                }
+            }
+        } catch {
+            // ignore read errors in passive mode
+        }
+        return events;
     }
 
     private async detectExcessiveFileDeletion(events: ActivityEvent[]): Promise<void> {

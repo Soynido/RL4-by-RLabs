@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { RL4Event } from "../legacy/rl4/RL4Messages";
+import { RL4Event, MessageType } from "../legacy/rl4/RL4Messages";
 import { RL4Dictionary } from "../legacy/rl4/RL4Dictionary";
 
 /**
@@ -123,7 +123,7 @@ export class CodeStateAnalyzer {
         const churn: Record<string, number> = {};
 
         for (const ev of events) {
-            if (ev.type === "file.modify" && ev.payload?.path) {
+            if (ev.type === MessageType.FILE_MODIFIED && ev.payload?.path) {
                 churn[ev.payload.path] = (churn[ev.payload.path] || 0) + 1;
             }
         }

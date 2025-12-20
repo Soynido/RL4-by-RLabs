@@ -1,7 +1,5 @@
 import * as fs from "fs";
 import * as path from "path";
-import { TimelineEncoder } from "../rl4/TimelineEncoder";
-import { RL4Dictionary } from "../legacy/rl4/RL4Dictionary";
 import { ActivityReconstructor } from "./ActivityReconstructor";
 
 export interface TimelinePeriod {
@@ -29,12 +27,10 @@ export interface BlindSpotReport {
 
 export class BlindSpotDataLoader {
     private workspace: string;
-    private encoder: TimelineEncoder;
     private reconstructor: ActivityReconstructor;
 
     constructor(workspaceRoot: string) {
         this.workspace = workspaceRoot;
-        this.encoder = new TimelineEncoder();
         this.reconstructor = new ActivityReconstructor(workspaceRoot);
     }
 
@@ -50,7 +46,9 @@ export class BlindSpotDataLoader {
         const stale = this.detectStaleFiles(actual);
 
         const timeline = await this.reconstructor.reconstruct();
-        const gaps = this.detectTimelineGaps(timeline.events);
+        // Extract events from tasks since ReconstructionResult doesn't have direct events property
+        const allEvents = timeline.tasks.flatMap(task => task.events || []);
+        const gaps = this.detectTimelineGaps(allEvents);
 
         const hotspots = this.detectUnexploredHotspots(actual, timeline);
         const semanticWeakness = this.computeWeakSemanticZones(timeline);
@@ -113,10 +111,8 @@ export class BlindSpotDataLoader {
     private isFileReferenced(file: string): boolean {
         // Check whether dictionary or other modules consider this file relevant
         const ext = path.extname(file).replace(".", "").toLowerCase();
-
-        // Use RL4Dictionary to check if file type is recognized
-        const category = RL4Dictionary.getPatternCategory(ext);
-        return category !== 'maintenance'; // Files in maintenance category are considered non-referenced
+        const category = this.getPatternCategory(ext);
+        return category !== 'maintenance';
     }
 
     private detectStaleFiles(files: string[]): string[] {
@@ -124,8 +120,7 @@ export class BlindSpotDataLoader {
             const ext = path.extname(f).slice(1);
             const age = this.getFileAgeMinutes(f);
 
-            // "stale" = relevant but untouched for a long period
-            const category = RL4Dictionary.getPatternCategory(ext);
+            const category = this.getPatternCategory(ext);
             return category !== 'maintenance' && age > 30 * 24 * 60; // 30 days
         });
     }
@@ -185,7 +180,7 @@ export class BlindSpotDataLoader {
 
         for (const file of files) {
             const ext = path.extname(file).slice(1);
-            const category = RL4Dictionary.getPatternCategory(ext);
+            const category = this.getPatternCategory(ext);
 
             if (category !== 'maintenance' && !activityFiles.has(file)) {
                 hotspots.push({
@@ -208,8 +203,8 @@ export class BlindSpotDataLoader {
         const categories = new Map<string, number>();
 
         for (const evt of timeline.events) {
-            const classification = RL4Dictionary.classifyEvent(evt);
-            categories.set(classification.classification, (categories.get(classification.classification) ?? 0) + 1);
+            const classification = this.classifyEvent(evt);
+            categories.set(classification, (categories.get(classification) ?? 0) + 1);
         }
 
         // Weak zone = very low representation
@@ -223,5 +218,41 @@ export class BlindSpotDataLoader {
         }
 
         return zones;
+    }
+
+    // Additional methods needed by UnifiedPromptBuilder
+    async loadTimeline(period?: any): Promise<any[]> {
+        throw new Error("Not implemented: BlindSpotDataLoader.loadTimeline() method not available");
+    }
+
+    async loadGitHistory(limit?: number): Promise<any[]> {
+        throw new Error("Not implemented: BlindSpotDataLoader.loadGitHistory() method not available");
+    }
+
+    async loadHealthTrends(period?: any): Promise<any[]> {
+        throw new Error("Not implemented: BlindSpotDataLoader.loadHealthTrends() method not available");
+    }
+
+    async loadFilePatterns(period?: any): Promise<any[]> {
+        throw new Error("Not implemented: BlindSpotDataLoader.loadFilePatterns() method not available");
+    }
+
+    async loadADRs(limit?: number): Promise<any[]> {
+        throw new Error("Not implemented: BlindSpotDataLoader.loadADRs() method not available");
+    }
+
+    // ---------------------------------------------------------------------
+    // Lightweight classification helpers (avoid legacy RL4Dictionary)
+    // ---------------------------------------------------------------------
+    private getPatternCategory(ext: string): string {
+        const maintain = ['log', 'tmp', 'lock', 'map'];
+        if (!ext) return 'unknown';
+        if (maintain.includes(ext)) return 'maintenance';
+        return 'code';
+    }
+
+    private classifyEvent(evt: any): string {
+        if (!evt || !evt.type) return 'unknown';
+        return String(evt.type);
     }
 }

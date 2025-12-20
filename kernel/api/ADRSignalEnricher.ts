@@ -107,7 +107,14 @@ export class ADRSignalEnricher {
      *   - "Changing this module impacts snapshot rotation"
      ****************************************************************************************/
     private extractConsequences(adr: ParsedADR): string[] {
-        return adr.consequences || [];
+        // adr.consequences is string but we need string[] - normalize safely
+        if (!adr.consequences) return [];
+
+        // Split by common separators and filter empty entries
+        return adr.consequences
+            .split(/[,;\n•]/)
+            .map(c => c.trim())
+            .filter(Boolean);
     }
 
     /****************************************************************************************
@@ -144,5 +151,10 @@ export class ADRSignalEnricher {
         }
 
         return warnings;
+    }
+
+    // Additional method needed by UnifiedPromptBuilder
+    async enrichCommits(commits: any[], intent: string): Promise<any[]> {
+        throw new Error("Not implemented: ADRSignalEnricher.enrichCommits() method not available");
     }
 }

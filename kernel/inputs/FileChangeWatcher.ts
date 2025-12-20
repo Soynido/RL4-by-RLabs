@@ -5,6 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { AppendOnlyWriter } from '../AppendOnlyWriter';
 import { CognitiveLogger } from '../core/CognitiveLogger';
 import { WriteTracker } from '../WriteTracker';
+import { MIL } from '../memory/MIL';
+import { EventSource } from '../memory/types';
 
 // TODO: FileChangeSummary n'est pas exporté par CognitiveLogger
 interface FileChangeSummary {
@@ -48,16 +50,23 @@ export class FileChangeWatcher {
     private appendWriter: AppendOnlyWriter | null = null;
     private cognitiveLogger: CognitiveLogger | null = null;
     private activityNotifier?: () => void;
+    private mil?: MIL; // MIL integration (optional for compatibility)
 
     // Aggregation timer (every 30 seconds)
     private aggregationTimer: NodeJS.Timeout | null = null;
     private lastAggregationTime: number = Date.now();
     private aggregatedChanges: Map<string, { count: number; lastChange: FileChange }> = new Map();
 
-    constructor(workspaceRoot: string, appendWriter?: AppendOnlyWriter, cognitiveLogger?: CognitiveLogger) {
+    // ✅ Fix 2: EPERM error aggregation (prevent log spam)
+    private epermErrorCount: number = 0;
+    private lastEpermLog: number = 0;
+    private patternsLogged = false; // log des patterns une seule fois
+
+    constructor(workspaceRoot: string, appendWriter?: AppendOnlyWriter, cognitiveLogger?: CognitiveLogger, mil?: MIL) {
         this.workspaceRoot = workspaceRoot;
         this.appendWriter = appendWriter || null; // Optional append-only writer (RL4 mode)
         this.cognitiveLogger = cognitiveLogger || null;
+        this.mil = mil; // MIL integration (optional for compatibility)
 
         // Start aggregation timer (every 30 seconds)
         this.startAggregationTimer();
@@ -150,12 +159,19 @@ export class FileChangeWatcher {
         }
 
         this.isWatching = true;
-        // Silent start (no log needed, transparency via aggregated logs)
+        if (this.cognitiveLogger) {
+            this.cognitiveLogger.system(`[FileChangeWatcher] Starting watch on: ${this.workspaceRoot}`);
+        }
+
+        // Diagnostic: log watch root and ignore patterns directly to stdout
+        const ignorePatterns = this.getIgnorePatterns();
+        console.log(`[FCW] WATCH ROOT = ${this.workspaceRoot}`);
+        console.log(`[FCW] IGNORE PATTERNS = ${ignorePatterns.map((r) => r.toString()).join(', ')}`);
 
         // Configure chokidar
         this.watcher = chokidar.watch('.', {
             cwd: this.workspaceRoot,
-            ignored: this.getIgnorePatterns(),
+            ignored: ignorePatterns,
             persistent: true,
             ignoreInitial: true,
             awaitWriteFinish: {
@@ -165,11 +181,29 @@ export class FileChangeWatcher {
             depth: 10
         });
 
+        // Raw FS event logging (stdout) to validate chokidar scope
+        this.watcher.on('all', (event, filePath) => {
+            console.log(`[FCW RAW] ${event} -> ${filePath}`);
+        });
+
+        if (this.cognitiveLogger) {
+            this.cognitiveLogger.system('[FileChangeWatcher] Watcher initialized');
+        }
+
         // Listen to events
         this.watcher
-            .on('add', (filePath) => this.onFileAdded(filePath))
-            .on('change', (filePath) => this.onFileChanged(filePath))
-            .on('unlink', (filePath) => this.onFileDeleted(filePath))
+            .on('add', (filePath) => {
+                this.cognitiveLogger?.system(`[FileChangeWatcher RAW] add: ${filePath}`);
+                this.onFileAdded(filePath);
+            })
+            .on('change', (filePath) => {
+                this.cognitiveLogger?.system(`[FileChangeWatcher RAW] change: ${filePath}`);
+                this.onFileChanged(filePath);
+            })
+            .on('unlink', (filePath) => {
+                this.cognitiveLogger?.system(`[FileChangeWatcher RAW] unlink: ${filePath}`);
+                this.onFileDeleted(filePath);
+            })
             .on('error', (error: unknown) => this.onError(error instanceof Error ? error : new Error(String(error))));
 
         // Silent start (transparency via aggregated logs every 30s)
@@ -199,7 +233,7 @@ export class FileChangeWatcher {
      * Get patterns to ignore
      */
     private getIgnorePatterns(): RegExp[] {
-        return [
+        const patterns = [
             /(^|[\/\\])\../,  // Hidden files
             /node_modules/,
             /\.git\//,
@@ -215,8 +249,29 @@ export class FileChangeWatcher {
             /\.tmp$/,
             /\.log$/,
             /\.jsonl$/,  // ✅ FIX: Ignore structured logs to prevent infinite loops
-            /\.lock$/
+            /\.lock$/,
+            // ✅ Fix 3: macOS system directories (prevent EPERM errors)
+            /^Library\//,      // macOS Library directory
+            /^Downloads\//,    // Downloads directory
+            /^Pictures\//,      // Pictures directory
+            /^Documents\//,    // Documents directory
+            /^Desktop\//,       // Desktop directory
+            /^Movies\//,        // Movies directory
+            /^Music\//,         // Music directory
+            /^Public\//,        // Public directory
+            /^Applications\//,  // Applications directory
+            /^System\//,        // System directory
+            /^Users\/[^\/]+\/Library\//,  // User Library (more specific)
+            /^\.Trash\//,       // Trash directory
+            /^\.DS_Store$/,     // macOS metadata file
         ];
+
+        if (this.cognitiveLogger && !this.patternsLogged) {
+            this.cognitiveLogger.system(`[FileChangeWatcher] Ignore patterns loaded: ${patterns.length} patterns`);
+            this.patternsLogged = true;
+        }
+
+        return patterns;
     }
 
     /**
@@ -227,6 +282,7 @@ export class FileChangeWatcher {
 
         // ✅ CRITICAL: Check if this change should be ignored (internal RL4 write)
         if (WriteTracker.getInstance().shouldIgnoreChange(fullPath)) {
+            this.cognitiveLogger?.system(`[FileChangeWatcher] IGNORED (internal write): ${filePath}`);
             return; // Ignore internal writes to prevent infinite loops
         }
 
@@ -239,6 +295,14 @@ export class FileChangeWatcher {
         };
 
         this.bufferChange(filePath, change);
+
+        // ✅ OPTIMISATION: Enrichir l'output avec les données FileChange existantes
+        if (this.cognitiveLogger) {
+            // filePath est déjà relatif au workspace (chokidar avec cwd)
+            const relPath = filePath.replace(/^\//, ''); // Enlever le / initial si présent
+            const sizeKB = (change.size / 1024).toFixed(1);
+            this.cognitiveLogger.system(`📄 File added: ${relPath} (${sizeKB} KB, ${change.extension || 'no ext'})`);
+        }
 
         // Notify activity
         if (this.activityNotifier) {
@@ -254,6 +318,7 @@ export class FileChangeWatcher {
 
         // ✅ CRITICAL: Check if this change should be ignored (internal RL4 write)
         if (WriteTracker.getInstance().shouldIgnoreChange(fullPath)) {
+            this.cognitiveLogger?.system(`[FileChangeWatcher] IGNORED (internal write): ${filePath}`);
             return; // Ignore internal writes to prevent infinite loops
         }
 
@@ -266,6 +331,14 @@ export class FileChangeWatcher {
         };
 
         this.bufferChange(filePath, change);
+
+        // ✅ OPTIMISATION: Enrichir l'output avec les données FileChange existantes
+        if (this.cognitiveLogger) {
+            // filePath est déjà relatif au workspace (chokidar avec cwd)
+            const relPath = filePath.replace(/^\//, ''); // Enlever le / initial si présent
+            const sizeKB = (change.size / 1024).toFixed(1);
+            this.cognitiveLogger.system(`📝 File modified: ${relPath} (${sizeKB} KB, ${change.extension || 'no ext'})`);
+        }
 
         // Notify activity
         if (this.activityNotifier) {
@@ -281,6 +354,7 @@ export class FileChangeWatcher {
 
         // ✅ CRITICAL: Check if this change should be ignored (internal RL4 write)
         if (WriteTracker.getInstance().shouldIgnoreChange(fullPath)) {
+            this.cognitiveLogger?.system(`[FileChangeWatcher] IGNORED (internal write): ${filePath}`);
             return; // Ignore internal writes to prevent infinite loops
         }
 
@@ -294,6 +368,13 @@ export class FileChangeWatcher {
 
         this.bufferChange(filePath, change);
 
+        // ✅ OPTIMISATION: Enrichir l'output avec les données FileChange existantes
+        if (this.cognitiveLogger) {
+            // filePath est déjà relatif au workspace (chokidar avec cwd)
+            const relPath = filePath.replace(/^\//, ''); // Enlever le / initial si présent
+            this.cognitiveLogger.system(`🗑️  File deleted: ${relPath} (${change.extension || 'no ext'})`);
+        }
+
         // Notify activity
         if (this.activityNotifier) {
             this.activityNotifier();
@@ -304,6 +385,22 @@ export class FileChangeWatcher {
      * Handle errors
      */
     private onError(error: Error): void {
+        // ✅ Fix 2: Aggregate EPERM errors to prevent log spam
+        if (error.message.includes('EPERM')) {
+            this.epermErrorCount++;
+            const now = Date.now();
+            // Log only once every 30s
+            if (now - this.lastEpermLog > 30000) {
+                if (this.cognitiveLogger) {
+                    this.cognitiveLogger.warning(`⚠️ FileChangeWatcher: ${this.epermErrorCount} EPERM errors (system directories ignored)`);
+                }
+                this.epermErrorCount = 0;
+                this.lastEpermLog = now;
+            }
+            return; // Don't log individually
+        }
+        
+        // Other errors: log normally
         if (this.cognitiveLogger) {
             this.cognitiveLogger.warning(`⚠️ FileChangeWatcher error: ${error.message}`);
         }
@@ -351,6 +448,15 @@ export class FileChangeWatcher {
 
         // Save to traces
         await this.saveToTraces(event);
+        
+        // Ingest into MIL (if available)
+        if (this.mil) {
+            try {
+                await this.mil.ingest(event, EventSource.FILE_SYSTEM);
+            } catch (error) {
+                // Silent failure - MIL is optional
+            }
+        }
 
         // Clear buffer
         this.changeBuffer.clear();

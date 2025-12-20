@@ -13,7 +13,7 @@ declare module '../core/ILogger' {
         warning(msg: string): void;
         debug(msg: string): void;
         // Stub missing methods
-        info?(msg: string): void;
+        info(msg: string): void;
     }
 }
 

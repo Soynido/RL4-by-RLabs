@@ -3,6 +3,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { TimelineAggregator, DailyTimeline } from '../indexer/TimelineAggregator';
 import { CognitiveLogger } from '../core/CognitiveLogger';
+import { MIL } from '../memory/MIL';
 
 export interface TimeMachinePromptResult {
     prompt: string;
@@ -92,14 +93,17 @@ interface TimeMachinePromptData {
     contextSummary: ContextSnapshotData;
     ledgerState?: LedgerStateSummary;
     modifiedFiles: string[];
+    milEvents?: any[]; // MIL unified events
 }
 
 export class TimeMachinePromptBuilder {
     private timelineAggregator: TimelineAggregator;
     private diagnosticsPath: string;
+    private mil?: MIL;
 
-    constructor(private workspaceRoot: string, private logger?: CognitiveLogger) {
+    constructor(private workspaceRoot: string, private logger?: CognitiveLogger, mil?: MIL) {
         this.timelineAggregator = new TimelineAggregator(workspaceRoot);
+        this.mil = mil;
         this.diagnosticsPath = path.join(workspaceRoot, '.reasoning_rl4', 'diagnostics', 'history-prompts');
         if (!fs.existsSync(this.diagnosticsPath)) {
             fs.mkdirSync(this.diagnosticsPath, { recursive: true });
@@ -133,6 +137,19 @@ export class TimeMachinePromptBuilder {
         const ledgerState = this.collectLedgerState();
         const modifiedFiles = this.collectModifiedFiles(startDate, endDate);
 
+        // Enrich with MIL events (if available)
+        let milEvents: any[] = [];
+        if (this.mil) {
+            try {
+                const startMs = startDate.getTime();
+                const endMs = endDate.getTime();
+                milEvents = await this.mil.queryTemporal(startMs, endMs);
+            } catch (error) {
+                // Silent failure - MIL is optional
+                this.logger?.warning?.(`Failed to query MIL events: ${error}`);
+            }
+        }
+
         const prompt = this.composePrompt({
             start: startDate,
             end: endDate,
@@ -148,7 +165,8 @@ export class TimeMachinePromptBuilder {
             adrSummaries,
             contextSummary,
             ledgerState,
-            modifiedFiles
+            modifiedFiles,
+            milEvents: milEvents.length > 0 ? milEvents : undefined
         });
 
         const finalBytes = Buffer.byteLength(prompt, 'utf-8');
@@ -199,6 +217,32 @@ export class TimeMachinePromptBuilder {
         sections.push('');
         sections.push('---');
         sections.push('');
+        
+        // Add MIL unified events section if available
+        if (data.milEvents && data.milEvents.length > 0) {
+            sections.push('## 2. MIL Unified Events (Memory Index Layer)');
+            sections.push(`Total unified events: ${data.milEvents.length}`);
+            sections.push('');
+            sections.push('Event timeline (normalized, unified schema):');
+            sections.push('```');
+            // Show first 20 events
+            const eventsToShow = data.milEvents.slice(0, 20);
+            for (const event of eventsToShow) {
+                const time = new Date(event.timestamp).toISOString();
+                sections.push(`[${time}] ${event.type} (${event.source})`);
+                if (event.indexed_fields?.files && event.indexed_fields.files.length > 0) {
+                    sections.push(`  → Files: ${event.indexed_fields.files.slice(0, 3).join(', ')}${event.indexed_fields.files.length > 3 ? '...' : ''}`);
+                }
+            }
+            if (data.milEvents.length > 20) {
+                sections.push(`... (${data.milEvents.length - 20} more events)`);
+            }
+            sections.push('```');
+            sections.push('');
+            sections.push('---');
+            sections.push('');
+        }
+        
         sections.push('## 2. WAL Journal Entries (Kernel Operations)');
         sections.push('First 50 entries from wal.jsonl matching date range:');
         sections.push('```json');

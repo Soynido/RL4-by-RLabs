@@ -1,14 +1,17 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { getGlobalLedger } from '../kernel/rbom/index';
+import { ILogger } from '../kernel/core/ILogger';
+import { repairJsonlForRuntime, runUpgradeCheck } from '../kernel/bootstrap/UpgradeGuard';
 
 export class RL4Commands {
     private workspaceRoot: string;
-    private outputChannel: vscode.OutputChannel;
+    private logger: ILogger | null;
 
-    constructor(workspaceRoot: string) {
+    constructor(workspaceRoot: string, logger?: ILogger | null) {
         this.workspaceRoot = workspaceRoot;
-        this.outputChannel = vscode.window.createOutputChannel('RL4 Core');
+        this.logger = logger || null;
     }
 
     registerCommands(context: vscode.ExtensionContext) {
@@ -23,6 +26,11 @@ export class RL4Commands {
             () => this.repairLedger()
         );
 
+        const repairKernelCommand = vscode.commands.registerCommand(
+            'rl4.repairKernel',
+            () => this.repairKernel()
+        );
+
         const toggleWebviewCommand = vscode.commands.registerCommand(
             'rl4.toggleWebview',
             () => this.toggleWebview()
@@ -31,6 +39,7 @@ export class RL4Commands {
         context.subscriptions.push(
             openTerminalCommand,
             repairLedgerCommand,
+            repairKernelCommand,
             toggleWebviewCommand
         );
     }
@@ -44,7 +53,7 @@ export class RL4Commands {
 
             if (existingTerminal) {
                 existingTerminal.show();
-                this.outputChannel.appendLine(`[TERMINAL] ${new Date().toISOString()} - Existing RL4 Terminal shown`);
+                this.logger?.system('Existing RL4 Terminal shown');
             } else {
                 // Create new RL4 terminal with proper environment
                 const terminal = vscode.window.createTerminal({
@@ -63,26 +72,20 @@ export class RL4Commands {
                 const timestamp = new Date().toISOString().substring(11, 23);
                 terminal.sendText(`echo "[${timestamp}] 🧠 RL4 Terminal Ready"`);
 
-                this.outputChannel.appendLine(`[TERMINAL] ${new Date().toISOString()} - New RL4 Terminal created`);
+                this.logger?.system('New RL4 Terminal created');
             }
         } catch (error) {
             const errorMsg = `Failed to open RL4 terminal: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
     private async repairLedger() {
         try {
-            const ledger = getGlobalLedger();
-            if (!ledger) {
-                vscode.window.showWarningMessage('Ledger not initialized');
-                return;
-            }
-
             const timestamp = new Date().toISOString().substring(11, 23);
+            this.logger?.system(`[${timestamp}] 🔧 Starting ledger repair...`);
 
-            // Show progress notification
             await vscode.window.withProgress(
                 {
                     location: vscode.ProgressLocation.Notification,
@@ -90,28 +93,75 @@ export class RL4Commands {
                     cancellable: false
                 },
                 async (progress) => {
-                    progress.report({ increment: 0, message: 'Initializing repair...' });
+                    progress.report({ increment: 0, message: 'Repairing ledger files...' });
 
-                    // Simulate ledger repair process
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    progress.report({ increment: 33, message: 'Validating integrity...' });
+                    const ledgerDir = path.join(this.workspaceRoot, '.reasoning_rl4', 'ledger');
+                    
+                    let repairedCount = 0;
+                    const filesToRepair = [
+                        path.join(ledgerDir, 'rbom.jsonl'),
+                        path.join(ledgerDir, 'cycles.jsonl')
+                    ];
 
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    progress.report({ increment: 66, message: 'Rebuilding indexes...' });
+                    for (const filePath of filesToRepair) {
+                        if (fs.existsSync(filePath)) {
+                            const repaired = repairJsonlForRuntime(filePath, undefined);
+                            if (repaired) {
+                                repairedCount++;
+                                this.logger?.system(`[${timestamp}] ✅ Repaired: ${path.basename(filePath)}`);
+                            }
+                        }
+                    }
 
-                    await new Promise(resolve => setTimeout(resolve, 1000));
                     progress.report({ increment: 100, message: 'Repair complete' });
+
+                    const message = repairedCount > 0 
+                        ? `Ledger repair completed: ${repairedCount} file(s) repaired`
+                        : 'Ledger repair completed: No corruption found';
+                    
+            vscode.window.showInformationMessage(message);
+                    this.logger?.success(`[${timestamp}] Ledger repair completed: ${repairedCount} file(s) repaired`);
                 }
             );
-
-            const message = `[${timestamp}] Ledger repair completed successfully`;
-            vscode.window.showInformationMessage(message);
-            this.outputChannel.appendLine(`[REPAIR] ${new Date().toISOString()} - ${message}`);
 
         } catch (error) {
             const errorMsg = `Ledger repair failed: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
+        }
+    }
+
+    private async repairKernel() {
+        try {
+            const timestamp = new Date().toISOString().substring(11, 23);
+            this.logger?.system(`[${timestamp}] 🔧 Starting kernel repair...`);
+
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Repairing RL4 Kernel',
+                    cancellable: false
+                },
+                async (progress) => {
+                    progress.report({ increment: 0, message: 'Running upgrade check...' });
+
+                    const report = runUpgradeCheck(this.workspaceRoot, undefined);
+
+                    progress.report({ increment: 100, message: 'Repair complete' });
+
+                    const message = report.upgradeApplied
+                        ? `Kernel repair completed: ${report.repairedFiles.length} file(s) repaired`
+                        : 'Kernel repair completed: No issues found';
+                    
+                    vscode.window.showInformationMessage(message);
+                    this.logger?.success(`[${timestamp}] Kernel repair completed: ${report.repairedFiles.join(', ')}`);
+                }
+            );
+
+        } catch (error) {
+            const errorMsg = `Kernel repair failed: ${error}`;
+            vscode.window.showErrorMessage(errorMsg);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -121,14 +171,14 @@ export class RL4Commands {
             // For now, just show a message indicating the webview toggle
             const message = 'RL4 Dashboard toggle requested';
             vscode.window.showInformationMessage(message);
-            this.outputChannel.appendLine(`[WEBVIEW] ${new Date().toISOString()} - ${message}`);
+            this.logger?.system('RL4 Dashboard toggle requested');
 
             // TODO: Implement actual webview panel management
             // This should create or show/hide the RL4 cognitive dashboard
         } catch (error) {
             const errorMsg = `Failed to toggle webview: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 }

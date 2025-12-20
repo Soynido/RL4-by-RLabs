@@ -10,6 +10,7 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
 import { GlobalClock } from '../GlobalClock';
 import { TimerRegistry } from '../TimerRegistry';
 import { StateRegistry } from '../StateRegistry';
@@ -21,18 +22,7 @@ import { CognitiveScheduler } from '../CognitiveScheduler';
 import { ExecPool } from '../ExecPool';
 import { HealthMonitor } from '../HealthMonitor';
 import { GovernanceModeManager } from '../api/GovernanceModeManager';
-// import { UnifiedPromptBuilder } from '../api/UnifiedPromptBuilder'; // STUBBED - blocking build
-
-// TEMPORARY STUB - Replace with real implementation when legacy is fixed
-class UnifiedPromptBuilder {
-    constructor(rl4Path: string, logger?: any) {}
-    async generate(mode: string): Promise<{prompt: string, metadata: any}> {
-        return {
-            prompt: `# RL6 Snapshot - ${mode}\n\nBackend stub - implementation pending`,
-            metadata: { mode, timestamp: new Date().toISOString() }
-        };
-    }
-}
+import { UnifiedPromptBuilder } from '../api/UnifiedPromptBuilder';
 import { PlanTasksContextParser } from '../api/PlanTasksContextParser';
 import { detectWorkspaceState } from '../onboarding/OnboardingDetector';
 import { AnomalyDetector } from '../api/AnomalyDetector';
@@ -42,6 +32,17 @@ import { TaskManager } from '../api/TaskManager';
 import { PhaseDetector } from '../api/PhaseDetector';
 import { SystemStatusProvider } from '../api/SystemStatusProvider';
 import { TimeMachinePromptBuilder } from '../api/TimeMachinePromptBuilder';
+import { IntentionResolver } from '../core/IntentionResolver';
+import { SnapshotRotation } from '../indexer/SnapshotRotation';
+import { RL4CacheIndexer } from '../indexer/CacheIndex';
+import { RBOMLedger } from '../rbom/RBOMLedger';
+import { WriteAheadLog } from '../persistence/WriteAheadLog';
+import { GroundTruthSystem } from '../ground_truth/GroundTruthSystem';
+import { CrossFileConsistencyValidator } from '../validation/CrossFileConsistencyValidator';
+import { ActivityReconstructor } from '../api/ActivityReconstructor';
+import { TimelineAggregator } from '../indexer/TimelineAggregator';
+import { MIL } from '../memory/MIL';
+import { CursorChatListener } from '../inputs/CursorChatListener';
 
 // Global kernel components (accessible to IPC handlers)
 let kernelComponents: {
@@ -56,6 +57,15 @@ let kernelComponents: {
     gitListener: GitCommitListener;
     scheduler: CognitiveScheduler;
     healthMonitor: HealthMonitor | null;
+    rbomLedger?: RBOMLedger;
+    wal?: WriteAheadLog;
+    snapshotRotation?: SnapshotRotation;
+    cacheIndexer?: RL4CacheIndexer;
+    activityReconstructor?: ActivityReconstructor;
+    groundTruthSystem?: GroundTruthSystem;
+    consistencyValidator?: CrossFileConsistencyValidator;
+    timelineAggregator?: TimelineAggregator;
+    cyclesWriter?: AppendOnlyWriter;
     // onboardingDetector is a function, not an instance
     anomalyDetector: AnomalyDetector;
     deltaCalculator: DeltaCalculator;
@@ -64,6 +74,8 @@ let kernelComponents: {
     phaseDetector: PhaseDetector;
     systemStatusProvider: SystemStatusProvider;
     timeMachinePromptBuilder: TimeMachinePromptBuilder;
+    intentionResolver: IntentionResolver;
+    mil?: MIL;
 } | null = null;
 
 /**
@@ -109,26 +121,24 @@ async function handleQuery(msg: any): Promise<void> {
             }
 
             case 'get_last_cycle_health': {
-                // TODO: Implement getLastCycleHealth in CognitiveScheduler
-                data = {
-                    cycleId: 0,
-                    success: false,
-                    phases: [],
-                    duration: 0,
-                    error: 'getLastCycleHealth() not implemented'
-                };
+                const last = kernelComponents.scheduler.getLastCycleHealth();
+                if (!last) {
+                    data = {
+                        cycleId: 0,
+                        success: false,
+                        phases: [],
+                        duration: 0,
+                        error: 'No cycle run yet'
+                    };
+                } else {
+                    data = last;
+                }
                 break;
             }
 
             case 'reflect': {
-                // TODO: Implement runCycle in CognitiveScheduler
-                data = {
-                    cycleId: 0,
-                    success: false,
-                    phases: [],
-                    duration: 0,
-                    error: 'runCycle() not implemented'
-                };
+                const result = await kernelComponents.scheduler.runOnce();
+                data = result;
                 break;
             }
 
@@ -180,7 +190,24 @@ async function handleQuery(msg: any): Promise<void> {
                 if (!mode || !['strict', 'flexible', 'exploratory', 'free', 'firstUse'].includes(mode)) {
                     throw new Error(`Invalid mode: ${mode}`);
                 }
-                const result = await promptBuilder.generate(mode);
+
+                // Resolve intention (Phase 0)
+                const intentionResolver = (kernelComponents as any).intentionResolver;
+                let result;
+                if (intentionResolver) {
+                    const intent = intentionResolver.resolve({
+                        command: 'generate_snapshot',
+                        mode,
+                        cycleContext: payload.cycleContext,
+                        projectState: payload.projectState
+                    });
+                    kernelComponents.logger?.info?.(`[Kernel] Resolved intent: kind=${intent.kind}, mode=${intent.mode}, confidence=${intent.source.confidence}`);
+                    // Pass intent to builder (backward-compat: builder accepts it but may ignore it)
+                    result = await promptBuilder.generate(mode, payload.cycleContext, intent);
+                } else {
+                    // Fallback if resolver not initialized (backward-compat)
+                    result = await promptBuilder.generate(mode, payload.cycleContext);
+                }
                 data = {
                     prompt: result.prompt,
                     metadata: result.metadata
@@ -197,6 +224,70 @@ async function handleQuery(msg: any): Promise<void> {
             case 'get_workspace_state': {
                 const state = await detectWorkspaceState(kernelComponents.workspaceRoot);
                 data = state;
+                break;
+            }
+
+            case 'get_onboarding_status': {
+                const markerPath = path.join(kernelComponents.workspaceRoot, '.reasoning_rl4', '.onboarding_complete');
+                if (!fs.existsSync(markerPath)) {
+                    data = { complete: false };
+                } else {
+                    const raw = fs.readFileSync(markerPath, 'utf8');
+                    const parsed = JSON.parse(raw || '{}');
+                    data = {
+                        complete: true,
+                        mode: parsed.mode,
+                        firstUseMode: parsed.firstUseMode
+                    };
+                }
+                break;
+            }
+
+            case 'mark_onboarding_complete': {
+                const markerDir = path.join(kernelComponents.workspaceRoot, '.reasoning_rl4');
+                fs.mkdirSync(markerDir, { recursive: true });
+                const markerPath = path.join(markerDir, '.onboarding_complete');
+                const marker = {
+                    completed_at: new Date().toISOString(),
+                    mode: payload?.mode || 'unknown',
+                    firstUseMode: payload?.firstUseMode
+                };
+                fs.writeFileSync(markerPath, JSON.stringify(marker, null, 2), 'utf-8');
+                data = { success: true };
+                break;
+            }
+
+            case 'reset_onboarding': {
+                const markerPath = path.join(kernelComponents.workspaceRoot, '.reasoning_rl4', '.onboarding_complete');
+                if (fs.existsSync(markerPath)) {
+                    fs.unlinkSync(markerPath);
+                }
+                data = { success: true };
+                break;
+            }
+
+            case 'get_timeline_range': {
+                const ledgerDir = path.join(kernelComponents.workspaceRoot, '.reasoning_rl4', 'ledger');
+                const cyclesPath = path.join(ledgerDir, 'cycles.jsonl');
+                let firstCycleIso: string | null = null;
+                let lastCycleIso: string | null = null;
+                if (fs.existsSync(cyclesPath)) {
+                    try {
+                        const content = fs.readFileSync(cyclesPath, 'utf-8').trim();
+                        if (content.length > 0) {
+                            const lines = content.split('\n').filter(Boolean);
+                            if (lines.length > 0) {
+                                const first = JSON.parse(lines[0]);
+                                const last = JSON.parse(lines[lines.length - 1]);
+                                firstCycleIso = first?.timestamp || null;
+                                lastCycleIso = last?.timestamp || null;
+                            }
+                        }
+                    } catch (error) {
+                        kernelComponents.logger?.error?.(`[Kernel] Failed to read timeline range: ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                }
+                data = { firstCycleIso, lastCycleIso };
                 break;
             }
 
@@ -237,6 +328,16 @@ async function handleQuery(msg: any): Promise<void> {
             }
 
             case 'build_time_machine_prompt': {
+                // Resolve intention (Phase 0)
+                const intentionResolver = (kernelComponents as any).intentionResolver;
+                if (intentionResolver) {
+                    const intent = intentionResolver.resolve({
+                        command: 'build_time_machine_prompt',
+                        mode: payload.mode,
+                        projectState: payload.projectState
+                    });
+                    kernelComponents.logger?.info?.(`[Kernel] Resolved intent: kind=${intent.kind}, mode=${intent.mode}, confidence=${intent.source.confidence}`);
+                }
                 const result = await (kernelComponents as any).timeMachinePromptBuilder.build({
                     startIso: payload.startIso,
                     endIso: payload.endIso
@@ -325,42 +426,79 @@ async function main() {
         process.exit(1);
     }
 
+    // ✅ Fix 5: Validate workspaceRoot is a valid directory
+    try {
+        if (!fs.existsSync(workspaceRoot)) {
+            console.error(`ERROR: Invalid workspace root: ${workspaceRoot} (does not exist)`);
+            process.exit(1);
+        }
+        const stats = fs.statSync(workspaceRoot);
+        if (!stats.isDirectory()) {
+            console.error(`ERROR: Invalid workspace root: ${workspaceRoot} (not a directory)`);
+            process.exit(1);
+        }
+    } catch (error) {
+        console.error(`ERROR: Failed to validate workspace root: ${workspaceRoot} - ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+    }
+
     console.log(`[${new Date().toISOString()}] 🧠 RL4 Kernel starting in: ${workspaceRoot}`);
 
     // Ensure .reasoning_rl4 directory exists
     const rl4Dir = path.join(workspaceRoot, '.reasoning_rl4');
     const tracesDir = path.join(rl4Dir, 'traces');
     const logsDir = path.join(rl4Dir, 'logs');
+    const ledgerDir = path.join(rl4Dir, 'ledger');
+    const snapshotsDir = path.join(rl4Dir, 'snapshots');
+    const cacheDir = path.join(rl4Dir, 'cache');
+    const groundTruthDir = path.join(rl4Dir, 'ground_truth');
 
     try {
         require('fs').mkdirSync(tracesDir, { recursive: true });
         require('fs').mkdirSync(logsDir, { recursive: true });
+        require('fs').mkdirSync(ledgerDir, { recursive: true });
+        require('fs').mkdirSync(snapshotsDir, { recursive: true });
+        require('fs').mkdirSync(cacheDir, { recursive: true });
+        require('fs').mkdirSync(groundTruthDir, { recursive: true });
     } catch (error) {
         console.error(`ERROR: Failed to create directories: ${error}`);
         process.exit(1);
     }
 
     // Initialize components in order
-    console.log(`[${new Date().toISOString()}] Initializing GlobalClock...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: GlobalClock`);
     const clock = GlobalClock.getInstance();
+    console.log(`[DIAG] [${Date.now()}] Init done: GlobalClock`);
 
-    console.log(`[${new Date().toISOString()}] Initializing TimerRegistry...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: TimerRegistry`);
     const timerRegistry = new TimerRegistry();
+    console.log(`[DIAG] [${Date.now()}] Init done: TimerRegistry`);
 
-    console.log(`[${new Date().toISOString()}] Initializing AppendOnlyWriter...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: AppendOnlyWriter(kernel.jsonl)`);
     const appendWriter = new AppendOnlyWriter(
         path.join(tracesDir, 'kernel.jsonl'),
         { fsync: false, mkdirRecursive: true }
     );
     await appendWriter.init();
+    console.log(`[DIAG] [${Date.now()}] Init done: AppendOnlyWriter(kernel.jsonl)`);
 
-    console.log(`[${new Date().toISOString()}] Initializing CognitiveLogger...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: cyclesWriter`);
+    const cyclesWriter = new AppendOnlyWriter(
+        path.join(ledgerDir, 'cycles.jsonl'),
+        { fsync: false, mkdirRecursive: true }
+    );
+    await cyclesWriter.init();
+    console.log(`[DIAG] [${Date.now()}] Init done: cyclesWriter`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: CognitiveLogger`);
     const logger = new CognitiveLogger(workspaceRoot, 'normal');
+    console.log(`[DIAG] [${Date.now()}] Init done: CognitiveLogger`);
 
-    console.log(`[${new Date().toISOString()}] Initializing StateRegistry...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: StateRegistry`);
     const stateRegistry = new StateRegistry(workspaceRoot, appendWriter);
+    console.log(`[DIAG] [${Date.now()}] Init done: StateRegistry`);
 
-    console.log(`[${new Date().toISOString()}] Initializing ExecPool...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: ExecPool`);
     const execPool = new ExecPool(
         {
             maxConcurrency: 2,
@@ -370,21 +508,80 @@ async function main() {
         },
         timerRegistry
     );
+    console.log(`[DIAG] [${Date.now()}] Init done: ExecPool`);
 
-    console.log(`[${new Date().toISOString()}] Initializing FileChangeWatcher...`);
-    const fsWatcher = new FileChangeWatcher(workspaceRoot, appendWriter, logger);
+    // Create dedicated writers for file changes and git commits
+    console.log(`[DIAG] [${Date.now()}] Init start: fileChangesWriter`);
+    const fileChangesWriter = new AppendOnlyWriter(
+        path.join(tracesDir, 'file_changes.jsonl'),
+        { fsync: false, mkdirRecursive: true }
+    );
+    await fileChangesWriter.init();
+    console.log(`[DIAG] [${Date.now()}] Init done: fileChangesWriter`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: gitCommitsWriter`);
+    const gitCommitsWriter = new AppendOnlyWriter(
+        path.join(tracesDir, 'git_commits.jsonl'),
+        { fsync: false, mkdirRecursive: true }
+    );
+    await gitCommitsWriter.init();
+    console.log(`[DIAG] [${Date.now()}] Init done: gitCommitsWriter`);
+
+    // Initialize MIL (Memory Index Layer)
+    console.log(`[DIAG] [${Date.now()}] Init start: MIL`);
+    const mil = new MIL(workspaceRoot);
+    await mil.init();
+    console.log(`[DIAG] [${Date.now()}] Init done: MIL`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: FileChangeWatcher`);
+    const fsWatcher = new FileChangeWatcher(workspaceRoot, fileChangesWriter, logger, mil);
+    console.log(`[DIAG] [${Date.now()}] Starting FileChangeWatcher.startWatching()`);
     await fsWatcher.startWatching();
+    console.log(`[DIAG] [${Date.now()}] FileChangeWatcher started`);
 
-    console.log(`[${new Date().toISOString()}] Initializing GitCommitListener...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: GitCommitListener`);
     const gitListener = new GitCommitListener(
         workspaceRoot,
         execPool,
-        appendWriter,
-        logger
+        gitCommitsWriter,
+        logger,
+        undefined, // commitCountIncrementCallback
+        mil
     );
+    console.log(`[DIAG] [${Date.now()}] Starting GitCommitListener.startWatching()`);
     await gitListener.startWatching();
+    console.log(`[DIAG] [${Date.now()}] GitCommitListener started`);
 
-    console.log(`[${new Date().toISOString()}] Initializing CognitiveScheduler...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: HealthMonitor`);
+    const healthMonitor = new HealthMonitor(workspaceRoot, timerRegistry);
+    healthMonitor.start(timerRegistry);
+    console.log(`[DIAG] [${Date.now()}] Init done: HealthMonitor`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: CognitiveScheduler (legacy)`);
+    const rbomLedger = new RBOMLedger(workspaceRoot);
+    await rbomLedger.init();
+    console.log(`[DIAG] [${Date.now()}] Init start: WriteAheadLog`);
+    const wal = WriteAheadLog.getInstance(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: WriteAheadLog`);
+    console.log(`[DIAG] [${Date.now()}] Init start: SnapshotRotation`);
+    const snapshotRotation = new SnapshotRotation(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: SnapshotRotation`);
+    console.log(`[DIAG] [${Date.now()}] Init start: RL4CacheIndexer`);
+    const cacheIndexer = new RL4CacheIndexer(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: RL4CacheIndexer`);
+    console.log(`[DIAG] [${Date.now()}] Init start: ActivityReconstructor`);
+    const activityReconstructor = new ActivityReconstructor(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: ActivityReconstructor`);
+    console.log(`[DIAG] [${Date.now()}] Init start: GroundTruthSystem`);
+    const groundTruthSystem = new GroundTruthSystem(rl4Dir);
+    console.log(`[DIAG] [${Date.now()}] Init done: GroundTruthSystem`);
+    console.log(`[DIAG] [${Date.now()}] Init start: CrossFileConsistencyValidator`);
+    const consistencyValidator = new CrossFileConsistencyValidator(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: CrossFileConsistencyValidator`);
+    console.log(`[DIAG] [${Date.now()}] Init start: TimelineAggregator`);
+    const timelineAggregator = new TimelineAggregator(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: TimelineAggregator`);
+
     const scheduler = new CognitiveScheduler(
         logger,
         clock,
@@ -394,57 +591,99 @@ async function main() {
         {
             tickIntervalSec: 10, // Tick every 10 seconds
             hourlySummaryIntervalMs: 3600000, // 1 hour
-            gapThresholdMs: 15 * 60 * 1000 // 15 minutes
+            gapThresholdMs: 15 * 60 * 1000, // 15 minutes
+            cyclesWriter,
+            snapshotRotation,
+            cacheIndexer,
+            rbomLedger,
+            wal,
+            stateRegistry,
+            activityReconstructor,
+            healthMonitor,
+            groundTruthSystem,
+            consistencyValidator,
+            timelineAggregator,
+            rotationIntervalCycles: 100,
+            workspaceRoot
         }
     );
+    console.log(`[DIAG] [${Date.now()}] Init done: CognitiveScheduler (KMS)`);
 
     // ✅ Connecter les listeners au scheduler pour mettre à jour l'activité
     fsWatcher.setActivityNotifier(() => scheduler.notifyActivity());
     gitListener.setActivityNotifier(() => scheduler.notifyActivity());
 
-    console.log(`[${new Date().toISOString()}] Initializing HealthMonitor...`);
-    const healthMonitor = new HealthMonitor(workspaceRoot, timerRegistry);
-    healthMonitor.start(timerRegistry);
+    // RBOM kernel_start event
+    await rbomLedger.append('kernel_start', { workspaceRoot, timestamp: new Date().toISOString() });
 
     // Initialize governance mode manager and prompt builder
     const rl4Path = path.join(workspaceRoot, '.reasoning_rl4', 'governance');
     const governanceModeManager = new GovernanceModeManager(rl4Path);
     const planParser = new PlanTasksContextParser(rl4Path);
-    const promptBuilder = new UnifiedPromptBuilder(rl4Path, logger);
+    const promptBuilder = new UnifiedPromptBuilder(rl4Path, logger, mil);
+
+    // Push governance mode into StateRegistry at boot
+    const activeMode = governanceModeManager.getActiveMode();
+    console.log(`[DIAG] [${Date.now()}] Governance mode detected: ${activeMode}`);
+    await stateRegistry.setMode(activeMode as any);
+    console.log(`[DIAG] [${Date.now()}] StateRegistry mode set to: ${activeMode}`);
 
     // Initialize new components
     // OnboardingDetector is a function, not a class
 
-    console.log(`[${new Date().toISOString()}] Initializing AnomalyDetector...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: AnomalyDetector`);
     const anomalyDetector = new AnomalyDetector(workspaceRoot, appendWriter, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: AnomalyDetector`);
 
-    console.log(`[${new Date().toISOString()}] Initializing DeltaCalculator...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: DeltaCalculator`);
     const deltaCalculator = new DeltaCalculator(workspaceRoot, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: DeltaCalculator`);
 
-    console.log(`[${new Date().toISOString()}] Initializing SessionCaptureManager...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: SessionCaptureManager`);
     const sessionCaptureManager = new SessionCaptureManager(
         workspaceRoot,
         planParser,
         appendWriter,
         logger
     );
+    console.log(`[DIAG] [${Date.now()}] Init done: SessionCaptureManager`);
 
-    console.log(`[${new Date().toISOString()}] Initializing TaskManager...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: TaskManager`);
     const taskManager = new TaskManager(
         workspaceRoot,
         planParser,
         appendWriter,
         logger
     );
+    console.log(`[DIAG] [${Date.now()}] Init done: TaskManager`);
 
-    console.log(`[${new Date().toISOString()}] Initializing PhaseDetector...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: PhaseDetector`);
     const phaseDetector = new PhaseDetector(workspaceRoot, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: PhaseDetector`);
 
-    console.log(`[${new Date().toISOString()}] Initializing SystemStatusProvider...`);
+    console.log(`[DIAG] [${Date.now()}] Init start: SystemStatusProvider`);
     const systemStatusProvider = new SystemStatusProvider(workspaceRoot, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: SystemStatusProvider`);
 
-    console.log(`[${new Date().toISOString()}] Initializing TimeMachinePromptBuilder...`);
-    const timeMachinePromptBuilder = new TimeMachinePromptBuilder(workspaceRoot, logger);
+    console.log(`[DIAG] [${Date.now()}] Init start: TimeMachinePromptBuilder`);
+    const timeMachinePromptBuilder = new TimeMachinePromptBuilder(workspaceRoot, logger, mil);
+    console.log(`[DIAG] [${Date.now()}] Init done: TimeMachinePromptBuilder`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: IntentionResolver`);
+    const intentionResolver = new IntentionResolver();
+    console.log(`[DIAG] [${Date.now()}] Init done: IntentionResolver`);
+
+    // CursorChatListener (opt-in, fallback silencieux)
+    let cursorChatListener: CursorChatListener | null = null;
+    try {
+        cursorChatListener = new CursorChatListener(workspaceRoot, mil, undefined, logger);
+        await cursorChatListener.start(); // start() checks opt-in internally
+        console.log(`[DIAG] [${Date.now()}] CursorChatListener: initialized (opt-in check done)`);
+    } catch (error) {
+        // Fallback silencieux - MIL works without CursorChatListener
+        console.log(`[DIAG] [${Date.now()}] CursorChatListener: skipped (${error})`);
+        cursorChatListener = null;
+    }
 
     // Store components globally for IPC handlers
     kernelComponents = {
@@ -459,16 +698,29 @@ async function main() {
         gitListener,
         scheduler,
         healthMonitor,
+        rbomLedger,
+        wal,
+        snapshotRotation,
+        cacheIndexer,
+        activityReconstructor,
+        groundTruthSystem,
+        consistencyValidator,
+        timelineAggregator,
+        cyclesWriter,
+        fileChangesWriter,
+        gitCommitsWriter,
         governanceModeManager,
         planParser,
         promptBuilder,
-          anomalyDetector,
+        anomalyDetector,
         deltaCalculator,
         sessionCaptureManager,
         taskManager,
         phaseDetector,
         systemStatusProvider,
-        timeMachinePromptBuilder
+        timeMachinePromptBuilder,
+        intentionResolver,
+        mil
     } as any;
 
     // Setup IPC message handler (for fork-based communication)
@@ -497,8 +749,9 @@ async function main() {
     });
 
     // Start scheduler (ONCE)
-    console.log(`[${new Date().toISOString()}] Starting CognitiveScheduler...`);
+    console.log(`[DIAG] [${Date.now()}] Starting CognitiveScheduler...`);
     scheduler.start();
+    console.log(`[DIAG] [${Date.now()}] CognitiveScheduler started`);
 
     // Signal that kernel is ready (both stdout and IPC)
     console.log('KERNEL_READY:true');

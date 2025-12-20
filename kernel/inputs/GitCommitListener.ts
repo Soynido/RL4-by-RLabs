@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { ExecPool } from '../ExecPool';
 import { AppendOnlyWriter } from '../AppendOnlyWriter';
 import { CognitiveLogger } from '../core/CognitiveLogger';
+import { MIL } from '../memory/MIL';
+import { EventSource } from '../memory/types';
 
 // TODO: CommitEvent n'est pas exporté par CognitiveLogger
 interface CommitEvent {
@@ -57,6 +59,7 @@ export class GitCommitListener {
     private commitCountIncrementCallback: (() => void) | null = null;
     // private bridge: KernelBridge | null = null; // TODO: KernelBridge n'existe pas encore
     private activityNotifier?: () => void;
+    private mil?: MIL; // MIL integration (optional for compatibility)
 
     constructor(
         workspaceRoot: string,
@@ -64,6 +67,7 @@ export class GitCommitListener {
         appendWriter?: AppendOnlyWriter,
         cognitiveLogger?: CognitiveLogger,
         commitCountIncrementCallback?: () => void,
+        mil?: MIL,
         // bridge?: KernelBridge // TODO: KernelBridge n'existe pas encore
     ) {
         this.workspaceRoot = workspaceRoot;
@@ -76,6 +80,7 @@ export class GitCommitListener {
         this.appendWriter = appendWriter || null; // Optional append-only writer (RL4 mode)
         this.cognitiveLogger = cognitiveLogger || null;
         this.commitCountIncrementCallback = commitCountIncrementCallback || null;
+        this.mil = mil; // MIL integration (optional for compatibility)
         // this.bridge = bridge || null; // TODO: KernelBridge n'existe pas encore
     }
 
@@ -274,6 +279,15 @@ exit 0
 
             // Save to traces
             await this.saveToTraces(event);
+            
+            // Ingest into MIL (if available)
+            if (this.mil) {
+                try {
+                    await this.mil.ingest(event, EventSource.GIT);
+                } catch (error) {
+                    // Silent failure - MIL is optional
+                }
+            }
         } catch (error) {
             if (this.cognitiveLogger) {
                 this.cognitiveLogger.warning(`Failed to capture commit: ${error}`);

@@ -856,3 +856,9 @@ export namespace RL4Messages {
         return messages;
     }
 }
+
+// Direct exports for compatibility
+export type BaseMessage = RL4Messages.BaseMessage;
+export type RL4Event = RL4Messages.RL4Event;
+export const MessageType = RL4Messages.MessageType;
+export const MessageSource = RL4Messages.MessageSource;

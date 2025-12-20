@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { GlobalClock } from '../GlobalClock';
+import { WriteTracker } from '../WriteTracker';
 
 export interface WalEntry {
     seq: number;
@@ -13,6 +14,7 @@ export interface WalEntry {
 export class WriteAheadLog {
     private static instance: WriteAheadLog;
     private logPath: string;
+    private writeTracker = WriteTracker.getInstance();
 
     private constructor(workspaceRoot: string) {
         const rl4Dir = path.join(workspaceRoot, '.reasoning_rl4');
@@ -47,6 +49,7 @@ export class WriteAheadLog {
         try {
             fs.writeSync(fd, JSON.stringify(entry) + '\n');
             fs.fsyncSync(fd); // Ensure entry is on disk before applying
+            this.writeTracker.markInternalWrite(this.logPath);
         } finally {
             fs.closeSync(fd);
         }

@@ -1,6 +1,5 @@
-import { BaseMessage } from "../legacy/rl4/RL4Messages";
-import { TimelineEncoder } from "../rl4/TimelineEncoder";
-import { RL4Dictionary } from "../legacy/rl4/RL4Dictionary";
+import { BaseMessage, MessageType } from "../legacy/rl4/RL4Messages";
+import * as RL4Messages from "../legacy/rl4/RL4Messages";
 
 /**
  * HistorySummarizer - RL6 Cognitive History Compressor
@@ -56,11 +55,7 @@ export interface SummarizedHistory {
 }
 
 export class HistorySummarizer {
-    private encoder: TimelineEncoder;
-
-    constructor() {
-        this.encoder = new TimelineEncoder();
-    }
+    constructor() {}
 
     /**
      * Produce a deterministic semantic summary.
@@ -83,28 +78,25 @@ export class HistorySummarizer {
         // 1. Normalize timeline
         const normalized = this.normalizeEvents(timeline);
 
-        // 2. Group into cognitive units
-        const grouped = this.encoder.groupByCognitiveUnits(normalized);
-
-        // 3. Scan patterns (via RL4 Dictionary)
+        // 2. Scan patterns (lightweight)
         const patternStats = this.extractPatterns(normalized);
 
-        // 4. Detect anomalies
+        // 3. Detect anomalies
         const anomalies = this.detectAnomalies(normalized);
 
-        // 5. Build semantic summaries of meaningful events only
+        // 4. Build semantic summaries of meaningful events only
         const summarizedEvents = this.buildSummaries(normalized);
 
-        // 6. Extract working set (active files, entities)
+        // 5. Extract working set (active files, entities)
         const workingSets = this.computeWorkingSet(normalized);
 
-        // 7. Extract task progression hints
+        // 6. Extract task progression hints
         const tasks = this.extractTasksFromEvents(normalized);
 
         return {
             sessionId,
-            startTime: normalized[0].timestamp,
-            endTime: normalized[normalized.length - 1].timestamp,
+            startTime: normalized[0].timestamp.toISOString(),
+            endTime: normalized[normalized.length - 1].timestamp.toISOString(),
             events: summarizedEvents,
             tasks,
             workingSets,
@@ -143,8 +135,8 @@ export class HistorySummarizer {
     private summarizeEvent(ev: BaseMessage): string {
         switch (ev.type) {
             case RL4Messages.MessageType.FILE_MODIFIED:
-            case RL4Messages.MessageType.FILE_CREATE:
-            case RL4Messages.MessageType.FILE_DELETE:
+            case RL4Messages.MessageType.FILE_CREATED:
+            case RL4Messages.MessageType.FILE_DELETED:
                 return `File ${ev.type.split('_')[1]}: ${ev.payload.filePath || 'unknown'}`;
             case RL4Messages.MessageType.GIT_EVENT:
                 return `Commit: ${(ev.payload.message || '').slice(0, 60)}…`;
@@ -186,10 +178,7 @@ export class HistorySummarizer {
         const counts: Record<string, number> = {};
 
         for (const ev of events) {
-            const classification = RL4Dictionary.classifyEvent(ev);
-            if (!classification) continue;
-
-            const category = classification.classification;
+            const category = this.classifyEvent(ev);
             counts[category] = (counts[category] || 0) + 1;
         }
 
@@ -248,7 +237,7 @@ export class HistorySummarizer {
 
         // Simple anomaly detection patterns
         const fileDeletionCount = events.filter(e =>
-            e.type === RL4Messages.MessageType.FILE_DELETE
+            e.type === RL4Messages.MessageType.FILE_DELETED
         ).length;
 
         if (fileDeletionCount > 5) {
@@ -261,6 +250,15 @@ export class HistorySummarizer {
         }
 
         return anomalies;
+    }
+
+    /**
+     * Lightweight event classification (no legacy dictionary).
+     */
+    private classifyEvent(ev: BaseMessage): string {
+        if (!ev || !ev.type) return "unknown";
+        if (typeof ev.type === "string") return ev.type;
+        return String(ev.type);
     }
 
     /**

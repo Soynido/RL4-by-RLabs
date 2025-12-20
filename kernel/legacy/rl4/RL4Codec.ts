@@ -378,7 +378,7 @@ export namespace RL4Codec {
         /**
          * Create stream for encoding messages
          */
-        createEncodingStream(): NodeJS.Transform {
+        createEncodingStream(): import('stream').Transform {
             let buffer = '';
 
             return new (require('stream').Transform)({
@@ -397,10 +397,11 @@ export namespace RL4Codec {
         /**
          * Create stream for decoding messages
          */
-        createDecodingStream(): NodeJS.Transform {
+        createDecodingStream(): import('stream').Transform {
             return new (require('stream').Transform)({
                 objectMode: true,
                 transform(chunk: any, encoding, callback) {
+                    let buffer = '';
                     buffer += chunk.toString();
                     const lines = buffer.split('\n');
                     buffer = lines.pop() || '';

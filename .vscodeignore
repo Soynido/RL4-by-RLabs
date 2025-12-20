@@ -1,0 +1,155 @@
+# VS Code extension packaging ignore file
+# Rule: If it's not needed at runtime → exclude it
+
+# ============================================
+# DEV FILES (sources, configs, tooling)
+# ============================================
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/tsconfig.json
+**/*.map
+**/*.ts
+**/*.tsx
+!out/**/*.js
+webpack*.js
+eslint*
+.prettierrc
+jest.config.js
+
+# ============================================
+# SOURCES (exclude if compiled JS exists)
+# ============================================
+# Webview sources (bundled into out/webview/webview.js)
+webview/**/*.tsx
+webview/**/*.ts
+!webview/index.html
+# Exclude individual webview JS files compiled by tsc (only webview.js bundle is needed)
+# Paths in VSIX are prefixed with "extension/", but .vscodeignore uses project root
+out/webview/App.js
+out/webview/index.js
+out/webview/KernelAPIWrapper.js
+out/webview/RL4WebViewManager.js
+out/webview/components/
+out/webview/handlers/
+out/webview/hooks/
+out/webview/state/
+out/webview/utils/
+out/webview/**/*.map
+
+# Kernel sources (compiled to out/)
+kernel/**/*.ts
+!kernel/rules/*.mdc
+
+# Extension sources (compiled to out/extension.js)
+extension.ts
+
+# ============================================
+# NODE_MODULES (only include what's NOT bundled)
+# ============================================
+# Exclude ALL node_modules by default
+node_modules/**
+
+# Only include native/runtime deps that CAN'T be bundled
+!node_modules/uuid/**
+!node_modules/chokidar/**
+!node_modules/js-yaml/**
+!node_modules/cbor-x/**
+!node_modules/zod/**
+
+# Exclude dev files from node_modules (benchmarks, tests, maps, docs)
+node_modules/**/*.map
+node_modules/**/benchmark*
+node_modules/**/test*
+node_modules/**/tests/**
+node_modules/**/__tests__/**
+node_modules/**/*.test.*
+node_modules/**/*.spec.*
+node_modules/**/README.md
+node_modules/**/CHANGELOG*
+node_modules/**/LICENSE*
+node_modules/**/docs/**
+node_modules/**/doc/**
+node_modules/**/examples/**
+node_modules/**/example/**
+node_modules/**/*.d.ts
+!node_modules/uuid/**/*.d.ts
+!node_modules/chokidar/**/*.d.ts
+!node_modules/js-yaml/**/*.d.ts
+!node_modules/cbor-x/**/*.d.ts
+!node_modules/zod/**/*.d.ts
+
+# Exclude React ecosystem (should be bundled in webview)
+# !node_modules/react/**
+# !node_modules/react-dom/**
+# !node_modules/zustand/**
+# !node_modules/@types/react/**
+# !node_modules/@types/react-dom/**
+
+# ============================================
+# RUNTIME FILES (NEVER package)
+# ============================================
+.reasoning_rl4/**
+.traces/**
+
+# ============================================
+# DOCUMENTATION & DEV FILES
+# ============================================
+*.md
+!README.md
+mockup-*.html
+ARCHITECTURE.md
+TEAM_MODE_*.md
+DUMP/**
+
+# ============================================
+# DEVELOPMENT SCRIPTS
+# ============================================
+scripts/**
+
+# ============================================
+# IDE & EDITOR FILES
+# ============================================
+.cursor/**
+.claude/**
+
+# ============================================
+# BACKUP & TEMP FILES
+# ============================================
+*.backup
+**/*.backup
+*.tmp
+*.temp
+
+# ============================================
+# TEST FILES
+# ============================================
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+**/__tests__/**
+**/test/**
+**/tests/**
+
+# ============================================
+# BUILD ARTIFACTS
+# ============================================
+*.vsix
+dist/
+
+
+
+
+
+
+
+
+
+
+
+
+

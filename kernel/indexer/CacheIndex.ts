@@ -40,6 +40,14 @@ export interface CacheIndex {
     entries: IndexEntry[];
 }
 
+export interface CacheIndexStats {
+    total_cycles: number;
+    first: string;
+    last: string;
+    version: string;
+    generated_at: string;
+}
+
 export class RL4CacheIndexer {
     private workspaceRoot: string;
     private indexPath: string;
@@ -160,6 +168,79 @@ export class RL4CacheIndexer {
     getCyclesForFile(file: string): number[] {
         const index = this.loadIndex();
         return index.by_file[file] || [];
+    }
+
+    /**
+     * Incrementally update the index with a new cycle.
+     * @param cycleData Cycle summary object ({ cycleId, timestamp, phases, metadata, context })
+     * @param files Top files for this cycle (optional)
+     */
+    async updateIncremental(cycleData: any, files: string[] = []): Promise<void> {
+        const index = this.loadIndex();
+
+        if (!cycleData || typeof cycleData.cycleId !== 'number' || !cycleData.timestamp) {
+            // Guard: invalid cycle data, do nothing
+            return;
+        }
+
+        const timestamp = cycleData.timestamp || cycleData._timestamp;
+        const date = new Date(timestamp);
+        const day = timestamp.substring(0, 10);
+        const hour = date.getHours();
+        const hourKey = `${day}T${hour.toString().padStart(2, '0')}`;
+
+        // Construct entry
+        const entry: IndexEntry = {
+            cycleId: cycleData.cycleId,
+            timestamp,
+            day,
+            hour,
+            patterns_count: cycleData.phases?.patterns?.count || 0,
+            forecasts_count: cycleData.phases?.forecasts?.count || 0,
+            files: files.length > 0 ? Array.from(new Set(files)).slice(0, 3) : this.extractTopFiles(cycleData)
+        };
+
+        // Update collections
+        index.entries.push(entry);
+        index.total_cycles = index.entries.length;
+
+        if (!index.by_day[day]) index.by_day[day] = [];
+        index.by_day[day].push(entry.cycleId);
+
+        if (!index.by_hour[hourKey]) index.by_hour[hourKey] = [];
+        index.by_hour[hourKey].push(entry.cycleId);
+
+        entry.files.forEach(file => {
+            if (!index.by_file[file]) index.by_file[file] = [];
+            index.by_file[file].push(entry.cycleId);
+        });
+
+        // Update date range
+        if (!index.date_range.first || timestamp < index.date_range.first) {
+            index.date_range.first = timestamp;
+        }
+        if (!index.date_range.last || timestamp > index.date_range.last) {
+            index.date_range.last = timestamp;
+        }
+
+        this.saveIndex(index);
+    }
+
+    /**
+     * Returns lightweight stats about the current index.
+     */
+    getStats(): CacheIndexStats | null {
+        const index = this.loadIndex();
+        if (!index || index.entries.length === 0) {
+            return null;
+        }
+        return {
+            total_cycles: index.total_cycles,
+            first: index.date_range.first,
+            last: index.date_range.last,
+            version: index.version,
+            generated_at: index.generated_at
+        };
     }
     
     /**

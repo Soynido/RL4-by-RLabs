@@ -3,6 +3,9 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { AppendOnlyWriter } from '../AppendOnlyWriter';
 import * as vscode from 'vscode';
+import { ILogger } from '../core/ILogger';
+import { MIL } from '../memory/MIL';
+import { EventSource } from '../memory/types';
 
 // RL4 Minimal Types
 interface CaptureEvent {
@@ -13,31 +16,8 @@ interface CaptureEvent {
     metadata: any;
 }
 
-// RL4 Simple Logger
-class SimpleLogger {
-    private channel: vscode.OutputChannel | null = null;
-    
-    setChannel(channel: vscode.OutputChannel) {
-        this.channel = channel;
-    }
-    
-    log(message: string) {
-        if (this.channel) {
-            const timestamp = new Date().toISOString().substring(11, 23);
-            this.channel.appendLine(`[${timestamp}] ${message}`);
-        }
-    }
-    
-    warn(message: string) {
-        this.log(`⚠️ ${message}`);
-    }
-    
-    error(message: string) {
-        this.log(`❌ ${message}`);
-    }
-}
-
-const simpleLogger = new SimpleLogger();
+// ✅ REMOVED: SimpleLogger - IDEActivityListener now uses ILogger directly
+// No separate output channel needed
 
 /**
  * IDEActivityListener - Input Layer Component
@@ -59,18 +39,17 @@ export class IDEActivityListener {
     private workspaceRoot: string;
     private isActive: boolean = false;
     private appendWriter: AppendOnlyWriter | null = null;
-    private outputChannel: vscode.OutputChannel | null = null;
+    private logger: ILogger | null = null; // ✅ Use ILogger instead of OutputChannel
     private recentlyViewed: string[] = []; // Cache top 10
     private lastEditTimestamp: number = Date.now();
     private disposables: vscode.Disposable[] = []; // ✅ NEW: Track disposables
+    private mil?: MIL; // MIL integration (optional for compatibility)
     
-    constructor(workspaceRoot: string, appendWriter?: AppendOnlyWriter, outputChannel?: vscode.OutputChannel) {
+    constructor(workspaceRoot: string, appendWriter?: AppendOnlyWriter, logger?: ILogger, mil?: MIL) {
         this.workspaceRoot = workspaceRoot;
         this.appendWriter = appendWriter || null;
-        this.outputChannel = outputChannel || null;
-        if (this.outputChannel) {
-            simpleLogger.setChannel(this.outputChannel);
-        }
+        this.logger = logger || null; // ✅ Use ILogger instead of OutputChannel
+        this.mil = mil; // MIL integration (optional for compatibility)
     }
     
     /**
@@ -78,12 +57,12 @@ export class IDEActivityListener {
      */
     public async start(): Promise<void> {
         if (this.isActive) {
-            simpleLogger.warn('IDEActivityListener already active');
+            this.logger?.warning('IDEActivityListener already active');
             return;
         }
         
         this.isActive = true;
-        simpleLogger.log('👁️ IDEActivityListener started');
+        this.logger?.system('👁️ IDEActivityListener started');
         
         // Initialize append writer if needed
         if (!this.appendWriter) {
@@ -126,8 +105,17 @@ export class IDEActivityListener {
         try {
             const snapshot = await this.buildSnapshot();
             await this.persistSnapshot(snapshot);
+            
+            // Ingest into MIL (if available)
+            if (this.mil) {
+                try {
+                    await this.mil.ingest(snapshot, EventSource.IDE);
+                } catch (error) {
+                    // Silent failure - MIL is optional
+                }
+            }
         } catch (error) {
-            simpleLogger.error(`Failed to capture IDE snapshot: ${error}`);
+            this.logger?.error(`Failed to capture IDE snapshot: ${error}`);
         }
     }
     
@@ -255,7 +243,7 @@ export class IDEActivityListener {
         const summary = `📸 IDE snapshot: ${snapshot.open_files.length} open, ` +
                        `${snapshot.linter_errors.total} linter issues, ` +
                        `idle ${snapshot.time_since_last_edit_sec}s`;
-        simpleLogger.log(summary);
+        this.logger?.system(summary);
     }
     
     /**
@@ -284,7 +272,7 @@ export class IDEActivityListener {
             await this.appendWriter.flush();
         }
         
-        simpleLogger.log('👁️ IDEActivityListener stopped');
+        this.logger?.system('👁️ IDEActivityListener stopped');
     }
     
     /**
@@ -293,7 +281,7 @@ export class IDEActivityListener {
     public dispose(): void {
         this.disposables.forEach(d => d.dispose());
         this.disposables = [];
-        simpleLogger.log('👁️ IDEActivityListener disposed (all listeners cleaned)');
+        this.logger?.system('👁️ IDEActivityListener disposed (all listeners cleaned)');
     }
     
     /**

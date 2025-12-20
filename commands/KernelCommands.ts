@@ -1,13 +1,14 @@
 import * as vscode from 'vscode';
 import { KernelAPI } from '../kernel/KernelAPI';
+import { ILogger } from '../kernel/core/ILogger';
 
 export class KernelCommands {
     private kernelAPI: KernelAPI;
-    private outputChannel: vscode.OutputChannel;
+    private logger: ILogger | null;
 
-    constructor(kernelAPI: KernelAPI) {
+    constructor(kernelAPI: KernelAPI, logger?: ILogger | null) {
         this.kernelAPI = kernelAPI;
-        this.outputChannel = vscode.window.createOutputChannel('RL4 Kernel');
+        this.logger = logger || null;
     }
 
     registerCommands(context: vscode.ExtensionContext) {
@@ -53,12 +54,11 @@ Version: ${status.version}
             `.trim();
 
             vscode.window.showInformationMessage(message);
-            this.outputChannel.appendLine(`[STATUS] ${new Date().toISOString()}`);
-            this.outputChannel.appendLine(message);
+            this.logger?.system(`Kernel Status: ${message}`);
         } catch (error) {
             const errorMsg = `Failed to get kernel status: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -68,15 +68,14 @@ Version: ${status.version}
             if (cycleHealth && cycleHealth.cycleId > 0) {
                 const message = `Last Cycle #${cycleHealth.cycleId}: ${cycleHealth.duration}ms, ${cycleHealth.phases.length} phases, ${cycleHealth.success ? 'Success' : 'Failed'}`;
                 vscode.window.showInformationMessage(message);
-                this.outputChannel.appendLine(`[REFLECT] ${new Date().toISOString()}`);
-                this.outputChannel.appendLine(message);
+                this.logger?.system(`Kernel Reflection: ${message}`);
             } else {
                 vscode.window.showInformationMessage('No cycle data available');
             }
         } catch (error) {
             const errorMsg = `Failed to get kernel reflection: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -84,11 +83,11 @@ Version: ${status.version}
         try {
             await this.kernelAPI.flush();
             vscode.window.showInformationMessage('Kernel flushed successfully');
-            this.outputChannel.appendLine(`[FLUSH] ${new Date().toISOString()} - Kernel flushed`);
+            this.logger?.system('Kernel flushed successfully');
         } catch (error) {
             const errorMsg = `Failed to flush kernel: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -104,12 +103,11 @@ Status: ${status.running ? 'Running' : 'Offline'}
             `.trim();
 
             vscode.window.showInformationMessage(message);
-            this.outputChannel.appendLine(`[WHEREAMI] ${new Date().toISOString()}`);
-            this.outputChannel.appendLine(message);
+            this.logger?.system(`Kernel Location: ${message}`);
         } catch (error) {
             const errorMsg = `Failed to get kernel location: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 }

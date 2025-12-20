@@ -14,6 +14,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import { WriteTracker } from './WriteTracker';
 
 // Forward declaration - AppendOnlyWriter will be implemented later
 export interface AppendOnlyWriterInterface {
@@ -138,6 +139,7 @@ export class StateRegistry {
     private startTime: number;
     private lastSnapshotTime: number;
     private snapshotCount: number;
+    private writeTracker = WriteTracker.getInstance();
 
     constructor(workspaceRoot: string, writer?: AppendOnlyWriterInterface) {
         this.stateDir = path.join(workspaceRoot, '.reasoning_rl4', 'state');
@@ -311,6 +313,9 @@ export class StateRegistry {
         }
 
         await this.updateState(updates);
+        
+        // Force snapshot after every cycle to ensure state persistence
+        await this.snapshot(true);
     }
 
     /**
@@ -393,6 +398,7 @@ export class StateRegistry {
 
             // Write current state snapshot
             fs.writeFileSync(this.snapshotPath, JSON.stringify(this.state, null, 2));
+            this.writeTracker.markInternalWrite(this.snapshotPath);
 
             // Append to history if writer available
             if (this.writer) {
@@ -551,6 +557,7 @@ export class StateRegistry {
 
         try {
             fs.appendFileSync(this.historyPath, JSON.stringify(entry) + '\n');
+            this.writeTracker.markInternalWrite(this.historyPath);
         } catch (error) {
             console.warn('[StateRegistry] Failed to write to history:', error);
         }

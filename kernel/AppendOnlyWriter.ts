@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { WriteTracker } from "./WriteTracker";
 
 /**
  * AppendOnlyWriter RL6
@@ -27,6 +28,7 @@ export class AppendOnlyWriter {
     private queue: string[] = [];
     private writing = false;
     private options: AppendOnlyWriterOptions;
+    private writeTracker = WriteTracker.getInstance();
 
     constructor(filePath: string, options: AppendOnlyWriterOptions = {}) {
         this.filePath = filePath;
@@ -107,6 +109,7 @@ export class AppendOnlyWriter {
                     await this.init();
                 }
                 await this.fileHandle!.appendFile(chunk);
+                this.writeTracker.markInternalWrite(this.filePath);
                 return;
 
             } catch (err: any) {

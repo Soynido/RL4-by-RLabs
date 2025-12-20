@@ -14,12 +14,13 @@ export class KernelBridge extends EventEmitter {
     private child: cp.ChildProcess | null = null;
     private extensionPath: string;
     private logger: ILogger;
+    private workspaceRoot?: string; // ✅ Fix 1: Store workspaceRoot to pass to child process
     
     // Heartbeat
     private lastHeartbeat: number = Date.now();
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private readonly HEARTBEAT_RATE = 2000; // 2s
-    private readonly HEARTBEAT_TIMEOUT = 5000; // 5s
+    private readonly HEARTBEAT_TIMEOUT = 15000; // 15s TEMP diagnostic window
 
     // Crash Protection
     private restartTimestamps: number[] = [];
@@ -41,8 +42,19 @@ export class KernelBridge extends EventEmitter {
         super();
         this.extensionPath = extensionPath;
         this.logger = logger;
-        // Determine PID file path: .reasoning_rl4/kernel/kernel.pid
-        this.pidFile = path.join(extensionPath, '..', '.reasoning_rl4', 'kernel', 'kernel.pid');
+        // PID file path will be set when workspaceRoot is known (in setWorkspaceRoot or start)
+        // Temporary path, will be updated when workspaceRoot is set
+        this.pidFile = path.join(process.cwd(), '.reasoning_rl4', 'kernel.pid');
+    }
+
+    /**
+     * ✅ Fix 1: Set workspaceRoot before starting kernel
+     * Must be called before start() to ensure child process receives correct workspace
+     */
+    public setWorkspaceRoot(workspaceRoot: string): void {
+        this.workspaceRoot = workspaceRoot;
+        // Update PID file path to use workspace root (per-workspace isolation)
+        this.pidFile = path.join(workspaceRoot, '.reasoning_rl4', 'kernel.pid');
     }
 
     /**
@@ -58,10 +70,17 @@ export class KernelBridge extends EventEmitter {
      * ✅ ZOMBIE KILLER PROTOCOL (P0)
      * Checks for existing kernel process via PID lock file and KILLS it.
      * Ensures strict singleton property of the Kernel.
+     * PER-WORKSPACE: Only kills zombies for the current workspace.
      */
     private async killZombies(): Promise<void> {
+        // Only kill zombies if workspaceRoot is set (per-workspace isolation)
+        if (!this.workspaceRoot) {
+            this.logger.warning('[KernelBridge] Cannot kill zombies: workspaceRoot not set');
+            return;
+        }
+
         try {
-            // Ensure directory exists
+            // Ensure directory exists (in workspace, not extension path)
             const dir = path.dirname(this.pidFile);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -116,27 +135,38 @@ export class KernelBridge extends EventEmitter {
         // ✅ EXECUTE ZOMBIE KILLER BEFORE SPAWN
         await this.killZombies();
 
-        const entrypoint = path.join(this.extensionPath, 'out', 'extension', 'kernel', 'process', 'entrypoint.js');
+        const entrypoint = path.join(this.extensionPath, 'out', 'kernel', 'process', 'entrypoint.js');
 
-        this.logger.system(`[KernelBridge] Spawning child process: ${entrypoint}`);
+        // ✅ Fix 1: Pass workspaceRoot as argument to child process
+        const forkArgs = this.workspaceRoot ? [this.workspaceRoot] : [];
         
-        this.child = cp.fork(entrypoint, [], {
+        this.logger.system(`[KernelBridge] Spawning child process: ${entrypoint}${this.workspaceRoot ? ` (workspace: ${this.workspaceRoot})` : ' (no workspace)'}`);
+        
+        this.child = cp.fork(entrypoint, forkArgs, {
             stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
             env: { 
                 ...process.env, 
+                RL4_PROCESS: 'kernel', // ✅ Fix 5: Flag pour identifier le child process (hard block dans CognitiveLogger)
                 NODE_ENV: 'production',
                 ELECTRON_RUN_AS_NODE: '1',
                 VSCODE_IPC_HOOK: undefined 
             }
         });
 
-        // ✅ WRITE PID FILE (Lock)
-        if (this.child.pid) {
+        // ✅ WRITE PID FILE (Lock) - Only if workspaceRoot is set (per-workspace isolation)
+        if (this.child.pid && this.workspaceRoot) {
             try {
+                // Ensure directory exists
+                const pidDir = path.dirname(this.pidFile);
+                if (!fs.existsSync(pidDir)) {
+                    fs.mkdirSync(pidDir, { recursive: true });
+                }
                 fs.writeFileSync(this.pidFile, this.child.pid.toString(), 'utf-8');
             } catch (e) {
                 this.logger.error(`[KernelBridge] Failed to write PID file: ${e}`);
             }
+        } else if (this.child.pid && !this.workspaceRoot) {
+            this.logger.warning('[KernelBridge] Cannot write PID file: workspaceRoot not set');
         }
 
         // ✅ CRITICAL: Catch spawn errors

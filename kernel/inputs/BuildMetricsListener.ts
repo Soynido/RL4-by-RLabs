@@ -3,6 +3,7 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { AppendOnlyWriter } from '../AppendOnlyWriter';
 import * as vscode from 'vscode';
+import { ILogger } from '../core/ILogger';
 
 // RL4 Minimal Types
 interface CaptureEvent {
@@ -13,31 +14,8 @@ interface CaptureEvent {
     metadata: any;
 }
 
-// RL4 Simple Logger
-class SimpleLogger {
-    private channel: vscode.OutputChannel | null = null;
-    
-    setChannel(channel: vscode.OutputChannel) {
-        this.channel = channel;
-    }
-    
-    log(message: string) {
-        if (this.channel) {
-            const timestamp = new Date().toISOString().substring(11, 23);
-            this.channel.appendLine(`[${timestamp}] ${message}`);
-        }
-    }
-    
-    warn(message: string) {
-        this.log(`⚠️ ${message}`);
-    }
-    
-    error(message: string) {
-        this.log(`❌ ${message}`);
-    }
-}
-
-const simpleLogger = new SimpleLogger();
+// ✅ REMOVED: SimpleLogger - BuildMetricsListener now uses ILogger directly
+// No separate output channel needed
 
 /**
  * BuildMetricsListener - Input Layer Component
@@ -58,21 +36,20 @@ export class BuildMetricsListener {
     private workspaceRoot: string;
     private isActive: boolean = false;
     private appendWriter: AppendOnlyWriter | null = null;
-    private outputChannel: vscode.OutputChannel | null = null;
+    private logger: ILogger | null = null; // ✅ Use ILogger instead of OutputChannel
     private taskStartTimes: Map<string, number> = new Map();
     private bundleFilePath: string;
     private disposables: vscode.Disposable[] = []; // ✅ NEW: Track disposables
     private bundleMonitorInterval: NodeJS.Timeout | null = null; // ✅ NEW: Track interval
+    private pendingMetrics: BuildMetrics[] = [];
+    private metricsFlushTimer: NodeJS.Timeout | null = null;
+    private readonly aggregationWindowMs = 5000;
     
-    constructor(workspaceRoot: string, appendWriter?: AppendOnlyWriter, outputChannel?: vscode.OutputChannel) {
+    constructor(workspaceRoot: string, appendWriter?: AppendOnlyWriter, logger?: ILogger) {
         this.workspaceRoot = workspaceRoot;
         this.appendWriter = appendWriter || null;
-        this.outputChannel = outputChannel || null;
+        this.logger = logger || null; // ✅ Use ILogger instead of OutputChannel
         this.bundleFilePath = path.join(workspaceRoot, 'out', 'extension.js');
-        
-        if (this.outputChannel) {
-            simpleLogger.setChannel(this.outputChannel);
-        }
     }
     
     /**
@@ -80,12 +57,12 @@ export class BuildMetricsListener {
      */
     public async start(): Promise<void> {
         if (this.isActive) {
-            simpleLogger.warn('BuildMetricsListener already active');
+            this.logger?.warning('BuildMetricsListener already active');
             return;
         }
         
         this.isActive = true;
-        simpleLogger.log('🔨 BuildMetricsListener started');
+        this.logger?.system('🔨 BuildMetricsListener started');
         
         // Initialize append writer if needed
         if (!this.appendWriter) {
@@ -148,9 +125,9 @@ export class BuildMetricsListener {
             bundle_size_bytes: this.getBundleSize()
         };
         
-        await this.persistMetrics(metrics);
+        await this.queueMetrics(metrics);
         
-        simpleLogger.log(`🔨 Build completed: ${taskName} (${duration}ms)`);
+        this.logger?.system(`🔨 Build completed: ${taskName} (${duration}ms)`);
     }
     
     /**
@@ -209,7 +186,7 @@ export class BuildMetricsListener {
                     
                     // Log bundle change
                     if (sizeDelta !== 0) {
-                        simpleLogger.log(`📦 Bundle updated: ${currentSize} bytes (${sizeDelta > 0 ? '+' : ''}${sizeDelta})`);
+                        this.logger?.system(`📦 Bundle updated: ${currentSize} bytes (${sizeDelta > 0 ? '+' : ''}${sizeDelta})`);
                     }
                     
                     lastSize = currentSize;
@@ -222,22 +199,42 @@ export class BuildMetricsListener {
     }
     
     /**
-     * Persist build metrics to JSONL
+     * Queue metrics for batched flush
      */
-    private async persistMetrics(metrics: BuildMetrics): Promise<void> {
-        if (!this.appendWriter) {
+    private async queueMetrics(metrics: BuildMetrics): Promise<void> {
+        this.pendingMetrics.push(metrics);
+        if (!this.metricsFlushTimer) {
+            this.metricsFlushTimer = setTimeout(() => {
+                this.flushMetrics().catch(err => this.logger?.warning(`BuildMetrics flush error: ${err}`));
+            }, this.aggregationWindowMs);
+        }
+    }
+
+    /**
+     * Persist build metrics to JSONL (batched)
+     */
+    private async flushMetrics(): Promise<void> {
+        if (!this.appendWriter || this.pendingMetrics.length === 0) {
+            this.metricsFlushTimer = null;
             return;
         }
-        
-        const event: CaptureEvent = {
-            id: `build-${Date.now()}-${uuidv4().substring(0, 8)}`,
-            type: 'build_metrics',
-            timestamp: metrics.timestamp,
-            source: 'BuildMetricsListener',
-            metadata: metrics
-        };
-        
-        await this.appendWriter.append(event);
+
+        const toFlush = [...this.pendingMetrics];
+        this.pendingMetrics = [];
+        this.metricsFlushTimer = null;
+
+        for (const metrics of toFlush) {
+            const event: CaptureEvent = {
+                id: `build-${Date.now()}-${uuidv4().substring(0, 8)}`,
+                type: 'build_metrics',
+                timestamp: metrics.timestamp,
+                source: 'BuildMetricsListener',
+                metadata: metrics
+            };
+            await this.appendWriter.append(event);
+        }
+
+        await this.appendWriter.flush();
     }
     
     /**
@@ -256,8 +253,12 @@ export class BuildMetricsListener {
         if (this.appendWriter) {
             await this.appendWriter.flush();
         }
+        // Flush any pending metrics
+        if (this.pendingMetrics.length > 0) {
+            await this.flushMetrics();
+        }
         
-        simpleLogger.log('🔨 BuildMetricsListener stopped');
+        this.logger?.system('🔨 BuildMetricsListener stopped');
     }
     
     /**
@@ -274,7 +275,7 @@ export class BuildMetricsListener {
         this.disposables.forEach(d => d.dispose());
         this.disposables = [];
         
-        simpleLogger.log('🔨 BuildMetricsListener disposed (all listeners + timers cleaned)');
+        this.logger?.system('🔨 BuildMetricsListener disposed (all listeners + timers cleaned)');
     }
     
     /**

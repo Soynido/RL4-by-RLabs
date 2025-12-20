@@ -21,6 +21,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { PlanData, TasksData, ContextData } from '../api/PlanTasksContextParser';
+import { ADRFromFile } from '../api/ADRParser';
 
 export interface GroundTruthMetadata {
   established_at: string;
@@ -365,35 +366,115 @@ export class GroundTruthSystem {
     return (added + removed) / (total * 2);
   }
   
-  /**
-   * Levenshtein distance
-   */
-  private levenshteinDistance(a: string, b: string): number {
-    const matrix: number[][] = [];
-    
-    for (let i = 0; i <= b.length; i++) {
-      matrix[i] = [i];
-    }
-    
-    for (let j = 0; j <= a.length; j++) {
-      matrix[0][j] = j;
-    }
-    
-    for (let i = 1; i <= b.length; i++) {
-      for (let j = 1; j <= a.length; j++) {
-        if (b.charAt(i - 1) === a.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
-          );
+    /**
+     * Levenshtein distance
+     */
+    private levenshteinDistance(a: string, b: string): number {
+        const matrix: number[][] = [];
+        
+        for (let i = 0; i <= b.length; i++) {
+            matrix[i] = [i];
         }
-      }
+        
+        for (let j = 0; j <= a.length; j++) {
+            matrix[0][j] = j;
+        }
+        
+        for (let i = 1; i <= b.length; i++) {
+            for (let j = 1; j <= a.length; j++) {
+                if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                    matrix[i][j] = matrix[i - 1][j - 1];
+                } else {
+                    matrix[i][j] = Math.min(
+                        matrix[i - 1][j - 1] + 1,
+                        matrix[i][j - 1] + 1,
+                        matrix[i - 1][j] + 1
+                    );
+                }
+            }
+        }
+        
+        return matrix[b.length][a.length];
     }
-    
-    return matrix[b.length][a.length];
-  }
+
+    /**
+     * Save structural ADR to ground_truth/ADRs.yaml
+     * Only called for ADRs with status="accepted" and tag="structural"
+     */
+    async saveADR(adr: ADRFromFile): Promise<void> {
+        if (!this.isEstablished()) {
+            console.warn('[GroundTruthSystem] Ground truth not established, skipping ADR save');
+            return;
+        }
+
+        const adrsPath = path.join(this.groundTruthPath, 'ADRs.yaml');
+        
+        // Load existing ADRs or create new array
+        let existingADRs: any[] = [];
+        if (fs.existsSync(adrsPath)) {
+            try {
+                const content = fs.readFileSync(adrsPath, 'utf8');
+                const parsed = yaml.load(content) as any;
+                existingADRs = Array.isArray(parsed?.adrs) ? parsed.adrs : [];
+            } catch (error) {
+                console.error('[GroundTruthSystem] Failed to load existing ADRs:', error);
+            }
+        }
+
+        // Check if ADR already exists
+        if (existingADRs.some(a => a.id === adr.id)) {
+            console.log(`[GroundTruthSystem] ADR ${adr.id} already in ground_truth, skipping`);
+            return;
+        }
+
+        // Add new ADR
+        existingADRs.push({
+            id: adr.id,
+            title: adr.title,
+            status: adr.status,
+            date: adr.date,
+            author: adr.author,
+            context: adr.context,
+            decision: adr.decision,
+            consequences: adr.consequences,
+            saved_at: new Date().toISOString()
+        });
+
+        // Save to YAML
+        const yamlContent = yaml.dump({ adrs: existingADRs });
+        fs.writeFileSync(adrsPath, yamlContent, 'utf8');
+        console.log(`[GroundTruthSystem] ✅ Saved structural ADR ${adr.id} to ground_truth`);
+    }
+
+    /**
+     * Load ADRs from ground_truth/ADRs.yaml
+     */
+    loadADRs(): ADRFromFile[] {
+        const adrsPath = path.join(this.groundTruthPath, 'ADRs.yaml');
+        
+        if (!fs.existsSync(adrsPath)) {
+            return [];
+        }
+
+        try {
+            const content = fs.readFileSync(adrsPath, 'utf8');
+            const parsed = yaml.load(content) as any;
+            const adrs = Array.isArray(parsed?.adrs) ? parsed.adrs : [];
+            // Convert to ADRFromFile format (remove saved_at if present)
+            return adrs.map((adr: any) => ({
+                id: adr.id,
+                title: adr.title,
+                status: adr.status,
+                date: adr.date,
+                author: adr.author,
+                context: adr.context,
+                decision: adr.decision,
+                consequences: adr.consequences
+            } as ADRFromFile));
+        } catch (error) {
+            console.error('[GroundTruthSystem] Failed to load ADRs from ground_truth:', error);
+            return [];
+        }
+    }
 }
 

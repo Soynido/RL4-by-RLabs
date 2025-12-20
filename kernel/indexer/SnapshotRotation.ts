@@ -16,6 +16,7 @@ import * as path from 'path';
 import * as zlib from 'zlib';
 import { promisify } from 'util';
 import { execSync } from 'child_process';
+import { WriteTracker } from '../WriteTracker';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -42,6 +43,17 @@ export enum SnapshotType {
     DIFF = 'diff',
     STATE = 'state',
     ACTIVITY = 'activity'
+}
+
+export interface CognitiveSnapshot {
+    snapshot_id: number;
+    timestamp: string;
+    patterns: any[];
+    correlations: any[];
+    forecasts: any[];
+    cognitive_load: number;
+    git_context: any;
+    files_active: string[];
 }
 
 export interface RotationConfig {
@@ -88,6 +100,7 @@ export class SnapshotRotation {
     private metadataFile: string;
     private config: RotationConfig;
     private metadata: Map<string, SnapshotMetadata> = new Map();
+    private writeTracker = WriteTracker.getInstance();
 
     constructor(workspaceRoot: string, config?: Partial<RotationConfig>) {
         this.workspaceRoot = workspaceRoot;
@@ -723,6 +736,7 @@ export class SnapshotRotation {
         try {
             fs.writeFileSync(tempPath, data);
             fs.renameSync(tempPath, filePath);
+            this.writeTracker.markInternalWrite(filePath);
         } catch (error) {
             if (fs.existsSync(tempPath)) {
                 fs.unlinkSync(tempPath);
@@ -742,5 +756,68 @@ export class SnapshotRotation {
         }
 
         return `${size.toFixed(1)} ${units[unitIndex]}`;
+    }
+
+    /**
+     * Save a lightweight cognitive snapshot for a given cycle.
+     */
+    async saveSnapshot(cycleId: number, snapshot?: Partial<CognitiveSnapshot>): Promise<void> {
+        const filename = path.join(this.snapshotsDir, `snapshot-${cycleId}.json`);
+        const payload: CognitiveSnapshot = {
+            snapshot_id: cycleId,
+            timestamp: new Date().toISOString(),
+            patterns: snapshot?.patterns ?? [],
+            correlations: snapshot?.correlations ?? [],
+            forecasts: snapshot?.forecasts ?? [],
+            cognitive_load: snapshot?.cognitive_load ?? 0,
+            git_context: snapshot?.git_context ?? {},
+            files_active: snapshot?.files_active ?? []
+        };
+        await fs.promises.mkdir(this.snapshotsDir, { recursive: true });
+        fs.writeFileSync(filename, JSON.stringify(payload, null, 2), 'utf-8');
+        this.writeTracker.markInternalWrite(filename);
+    }
+
+    /**
+     * Load a cognitive snapshot by cycle id.
+     */
+    async loadSnapshot(cycleId: number): Promise<CognitiveSnapshot | null> {
+        const filename = path.join(this.snapshotsDir, `snapshot-${cycleId}.json`);
+        if (!fs.existsSync(filename)) return null;
+        try {
+            const content = fs.readFileSync(filename, 'utf-8');
+            return JSON.parse(content);
+        } catch (error) {
+            console.error(`SnapshotRotation: failed to load snapshot ${cycleId}:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Find the closest snapshot id to a timestamp (ISO string).
+     */
+    findClosestSnapshot(timestamp: string): number | null {
+        if (!fs.existsSync(this.snapshotsDir)) return null;
+        const files = fs.readdirSync(this.snapshotsDir).filter(f => f.startsWith('snapshot-') && f.endsWith('.json'));
+        if (files.length === 0) return null;
+        const target = new Date(timestamp).getTime();
+        let closest: { cycle: number; diff: number } | null = null;
+        for (const file of files) {
+            const m = file.match(/snapshot-(\d+)\.json/);
+            if (!m) continue;
+            const cycle = parseInt(m[1], 10);
+            const filePath = path.join(this.snapshotsDir, file);
+            try {
+                const snapshot = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as CognitiveSnapshot;
+                const ts = new Date(snapshot.timestamp).getTime();
+                const diff = Math.abs(ts - target);
+                if (!closest || diff < closest.diff) {
+                    closest = { cycle, diff };
+                }
+            } catch {
+                // skip invalid
+            }
+        }
+        return closest ? closest.cycle : null;
     }
 }

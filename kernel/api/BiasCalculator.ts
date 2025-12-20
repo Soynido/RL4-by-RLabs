@@ -1,4 +1,4 @@
-import { BaseMessage } from "../legacy/rl4/RL4Messages";
+import { BaseMessage, MessageType } from "../legacy/rl4/RL4Messages";
 import { RL4Dictionary } from "../legacy/rl4/RL4Dictionary";
 
 export interface CodeStateSnapshot {
@@ -134,7 +134,7 @@ export class BiasCalculator {
      ****************************************************************************************/
     private computePatternAlignment(intent: string, history: SummarizedHistory): number {
         const classification = RL4Dictionary.classifyEvent({
-            type: BaseMessage.MessageType.FILE_EVENT,
+            type: MessageType.FILE_EVENT,
             payload: { text: intent }
         } as any);
 

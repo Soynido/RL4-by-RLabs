@@ -1,0 +1,53 @@
+:root {
+  /* Backgrounds */
+  --bg-primary: #05050A;
+  --bg-secondary: #090613;
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-surface-hover: rgba(255, 255, 255, 0.06);
+
+  /* Borders */
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.15);
+  --border-active: rgba(255, 255, 255, 0.20);
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.70);
+  --text-muted: rgba(255, 255, 255, 0.40);
+  --text-disabled: rgba(255, 255, 255, 0.25);
+
+  /* Accents - Themes */
+  --ghost-gradient: linear-gradient(135deg, #a7b2ff, #c4b5fd);
+  --mint-gradient: linear-gradient(135deg, #34d399, #6ee7b7);
+  --uv-gradient: linear-gradient(135deg, #a855f7, #ec4899);
+
+  /* CTA Gradient */
+  --cta-gradient: linear-gradient(135deg, #a855f7, #7b5dff, #6366f1);
+  --cta-shadow: 0 25px 60px rgba(104, 94, 255, 0.35);
+
+  /* Success */
+  --success-gradient: linear-gradient(135deg, #10b981, #34d399);
+  --success-shadow: 0 20px 45px rgba(34, 197, 94, 0.35);
+
+  /* Severity Colors */
+  --severity-high: #f472b6;
+  --severity-high-bg: rgba(244, 63, 94, 0.10);
+  --severity-high-border: rgba(244, 114, 182, 0.50);
+  --severity-medium: #fbbf24;
+  --severity-medium-bg: rgba(251, 191, 36, 0.10);
+  --severity-medium-border: rgba(251, 191, 36, 0.50);
+  --severity-low: #10b981;
+  --severity-low-bg: rgba(16, 185, 129, 0.10);
+  --severity-low-border: rgba(52, 211, 153, 0.50);
+
+  /* Radius */
+  --radius-frame: 36px;
+  --radius-card: 24px;
+  --radius-button: 16px;
+  --radius-pill: 9999px;
+
+  /* Typography */
+  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'Fira Code', monospace;
+}
+

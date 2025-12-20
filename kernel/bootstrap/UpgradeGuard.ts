@@ -209,6 +209,63 @@ export function runUpgradeCheck(workspaceRoot: string, logger?: CognitiveLogger)
         report.coreReset = true;
     }
 
+    const adrsPath = governancePath(workspaceRoot, 'ADRs.RL4');
+    trackExisting('governance/ADRs.RL4');
+    const minimalADRs = () => `# ADRs (Architecture Decision Records)
+
+This file contains Architecture Decision Records (ADRs) for this project.
+
+## Format
+
+Each ADR follows this structure:
+
+\`\`\`markdown
+## ADR-XXX: [Title]
+
+**Status**: proposed | accepted | rejected | deprecated | superseded
+**Date**: YYYY-MM-DD
+**Author**: [Author name]
+
+### Context
+
+[Describe the context and problem that led to this decision]
+
+### Decision
+
+[Describe the decision made]
+
+### Consequences
+
+**Positive:**
+- [List positive consequences]
+
+**Negative:**
+- [List negative consequences]
+
+**Risks:**
+- [List potential risks]
+
+**Alternatives Considered:**
+- [List alternatives that were considered]
+\`\`\`
+
+## How to Use
+
+1. When the LLM (agent) proposes an ADR, add it to this file
+2. RL4 will automatically detect the change and parse it
+3. The ADR will be added to the ledger (\`.reasoning_rl4/ledger/adrs.jsonl\`)
+4. Future prompts will include this ADR in the context
+
+---
+
+_This file is managed by RL4. Add ADRs here as they are proposed by the agent._
+`;
+
+    if (writeTextIfNeeded(adrsPath, minimalADRs)) {
+        report.repairedFiles.push('ADRs.RL4');
+        report.coreReset = true;
+    }
+
     const diagnosticsGuard = new DiagnosticsArtifactsGuard(workspaceRoot);
     const created = diagnosticsGuard.ensureArtifactsSync();
     if (created.length > 0) {
@@ -240,6 +297,27 @@ export function runUpgradeCheck(workspaceRoot: string, logger?: CognitiveLogger)
     }
     if (historyExisted && historyRepair.corrupted) {
         report.historyTouched = true;
+    }
+
+    // Repair ledger files (rbom.jsonl and cycles.jsonl if present)
+    const rbomLedgerRelative = path.join('ledger', 'rbom.jsonl');
+    const rbomLedgerPath = path.join(rl4Path, rbomLedgerRelative);
+    trackExisting(rbomLedgerRelative);
+    if (fs.existsSync(rbomLedgerPath)) {
+        const rbomRepair = repairJsonlFile(rbomLedgerPath, logger);
+        if (rbomRepair.touched) {
+            report.repairedFiles.push(rbomLedgerRelative);
+        }
+    }
+
+    const cyclesRelative = path.join('ledger', 'cycles.jsonl');
+    const cyclesPath = path.join(rl4Path, cyclesRelative);
+    trackExisting(cyclesRelative);
+    if (fs.existsSync(cyclesPath)) {
+        const cyclesRepair = repairJsonlFile(cyclesPath, logger);
+        if (cyclesRepair.touched) {
+            report.repairedFiles.push(cyclesRelative);
+        }
     }
 
     const devTasksRelative = path.join('dev', 'dev-tasks.json');

@@ -720,6 +720,7 @@ export namespace RL4Dictionary {
                 {
                     id: 'burst_activity_detection',
                     name: 'Detect Burst Activity Patterns',
+                    description: 'Detects patterns of high-frequency file operations within short time windows',
                     trigger: {
                         eventType: ['file_event'],
                         conditions: { minCount: 10 },
@@ -738,6 +739,7 @@ export namespace RL4Dictionary {
                 {
                     id: 'context_switch_detection',
                     name: 'Detect Context Switching',
+                    description: 'Identifies patterns of rapid switching between different directories or work contexts',
                     trigger: {
                         eventType: ['file_event'],
                         conditions: { directoryChanges: true },

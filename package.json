@@ -1,0 +1,139 @@
+{
+  "name": "rl4-by-rlabs",
+  "displayName": "RL4 by RLabs",
+  "description": "The Cognitive Co-pilot That Remembers - A local-first cognitive operating system for your IDE",
+  "version": "0.1.0",
+  "publisher": "rlabs",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Snippets"
+  ],
+  "keywords": [
+    "ai",
+    "cognitive",
+    "memory",
+    "reasoning",
+    "context",
+    "assistant"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "rl4.showOutput",
+        "title": "Show RL4 Output"
+      },
+      {
+        "command": "rl4.openTerminal",
+        "title": "Open RL4 Terminal"
+      },
+      {
+        "command": "rl4.repairLedger",
+        "title": "Repair RL4 Ledger"
+      },
+      {
+        "command": "rl4.repairKernel",
+        "title": "Repair RL4 Kernel"
+      },
+      {
+        "command": "rl4.toggleWebview",
+        "title": "Toggle RL4 Dashboard"
+      },
+      {
+        "command": "reasoning.kernel.status",
+        "title": "RL4: Show Kernel Status"
+      },
+      {
+        "command": "reasoning.kernel.reflect",
+        "title": "RL4: Show Kernel Reflection"
+      },
+      {
+        "command": "reasoning.kernel.flush",
+        "title": "RL4: Flush Kernel"
+      },
+      {
+        "command": "reasoning.kernel.whereami",
+        "title": "RL4: Show Kernel Location"
+      },
+      {
+        "command": "reasoning.adr.reviewPending",
+        "title": "RL4: Review Pending ADRs"
+      },
+      {
+        "command": "reasoning.adr.acceptProposal",
+        "title": "RL4: Accept ADR Proposal"
+      },
+      {
+        "command": "reasoning.adr.rejectProposal",
+        "title": "RL4: Reject ADR Proposal"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "rl4Activity",
+          "name": "RL4",
+          "when": "workspaceFolderCount > 0"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rl4Activity",
+          "title": "RL4",
+          "icon": "media/rl4-activity-bar.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npm run compile:extension && npm run compile:webview",
+    "compile:extension": "tsc -p ./ && webpack --mode production --config webpack.config.js",
+    "compile:webview": "webpack --mode production --config webpack.webview.config.js && mkdir -p out/webview && cp webview/index.html out/webview/index.html && npm run clean:webview",
+    "clean:webview": "find out/webview -name '*.js' ! -name 'webview.js' -type f -delete && find out/webview -name '*.map' -type f -delete && find out/webview -type d -empty -delete",
+    "watch": "tsc -watch -p ./",
+    "watch:webview": "webpack --mode development --config webpack.webview.config.js --watch",
+    "package": "vsce package",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.19.27",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.80.0",
+    "@vscode/vsce": "^2.22.0",
+    "css-loader": "^7.1.2",
+    "jest": "^30.2.0",
+    "style-loader": "^4.0.0",
+    "ts-jest": "^29.4.6",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "better-sqlite3": "^9.0.0",
+    "cbor-x": "^1.6.0",
+    "chokidar": "^5.0.0",
+    "js-yaml": "^4.1.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "uuid": "^8.3.2",
+    "zod": "^3.25.76",
+    "zustand": "^5.0.9"
+  }
+}

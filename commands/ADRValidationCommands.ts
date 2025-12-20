@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { ILogger } from '../kernel/core/ILogger';
 
 export interface ADRProposal {
     id: string;
@@ -23,18 +24,18 @@ export class ADRValidationCommands {
     private workspaceRoot: string;
     private adrDir: string;
     private ledgerPath: string;
-    private outputChannel: vscode.OutputChannel;
+    private logger: ILogger | null;
 
-    constructor(workspaceRoot: string) {
+    constructor(workspaceRoot: string, logger?: ILogger | null) {
         this.workspaceRoot = workspaceRoot;
         this.adrDir = path.join(workspaceRoot, '.reasoning_rl4', 'adrs', 'auto');
         this.ledgerPath = path.join(workspaceRoot, '.reasoning_rl4', 'ledger', 'adr_validations.jsonl');
-        this.outputChannel = vscode.window.createOutputChannel('ADR Validation');
+        this.logger = logger || null;
         this.ensureDirectories();
     }
 
-    static registerCommands(context: vscode.ExtensionContext, workspaceRoot: string) {
-        const adrCommands = new ADRValidationCommands(workspaceRoot);
+    static registerCommands(context: vscode.ExtensionContext, workspaceRoot: string, logger?: ILogger | null) {
+        const adrCommands = new ADRValidationCommands(workspaceRoot, logger);
 
         const reviewCommand = vscode.commands.registerCommand(
             'reasoning.adr.reviewPending',
@@ -65,7 +66,7 @@ export class ADRValidationCommands {
                 fs.mkdirSync(ledgerDir, { recursive: true });
             }
         } catch (error) {
-            this.outputChannel.appendLine(`[ERROR] Failed to create directories: ${error}`);
+            this.logger?.error(`Failed to create directories: ${error}`);
         }
     }
 
@@ -86,13 +87,13 @@ export class ADRValidationCommands {
                         adrs.push(adr);
                     }
                 } catch (parseError) {
-                    this.outputChannel.appendLine(`[WARNING] Failed to parse ADR line: ${parseError}`);
+                    this.logger?.warning(`Failed to parse ADR line: ${parseError}`);
                 }
             }
 
             return adrs;
         } catch (error) {
-            this.outputChannel.appendLine(`[ERROR] Failed to load pending ADRs: ${error}`);
+            this.logger?.error(`Failed to load pending ADRs: ${error}`);
             return [];
         }
     }
@@ -125,7 +126,7 @@ export class ADRValidationCommands {
         } catch (error) {
             const errorMsg = `Failed to review pending ADRs: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -198,7 +199,7 @@ ${adr.consequences.alternatives.map(a => `• ${a}`).join('\n')}
         } catch (error) {
             const errorMsg = `Failed to accept ADR proposal: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -235,7 +236,7 @@ ${adr.consequences.alternatives.map(a => `• ${a}`).join('\n')}
         } catch (error) {
             const errorMsg = `Failed to reject ADR proposal: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -255,12 +256,12 @@ ${adr.consequences.alternatives.map(a => `• ${a}`).join('\n')}
 
             const message = `ADR "${adr.title}" accepted and saved`;
             vscode.window.showInformationMessage(message);
-            this.outputChannel.appendLine(`[ACCEPT] ${new Date().toISOString()} - ${message}`);
+            this.logger?.success(`ADR accepted: ${adr.title}`);
 
         } catch (error) {
             const errorMsg = `Failed to accept ADR: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 
@@ -275,12 +276,12 @@ ${adr.consequences.alternatives.map(a => `• ${a}`).join('\n')}
 
             const message = `ADR "${adr.title}" rejected`;
             vscode.window.showInformationMessage(message);
-            this.outputChannel.appendLine(`[REJECT] ${new Date().toISOString()} - ${message}`);
+            this.logger?.system(`ADR rejected: ${adr.title}`);
 
         } catch (error) {
             const errorMsg = `Failed to reject ADR: ${error}`;
             vscode.window.showErrorMessage(errorMsg);
-            this.outputChannel.appendLine(`[ERROR] ${errorMsg}`);
+            this.logger?.error(errorMsg);
         }
     }
 

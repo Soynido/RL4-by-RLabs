@@ -16,7 +16,7 @@ export interface RuleInstallationResult {
 
 export class RulesInstaller {
 
-    constructor(private workspaceRoot: string) {}
+    constructor(private workspaceRoot: string, private extensionPath?: string) {}
 
     /**
      * Install RL4 rules in .cursor/rules directory
@@ -33,10 +33,16 @@ export class RulesInstaller {
             const rulesDir = path.join(this.workspaceRoot, '.cursor', 'rules');
             await fs.promises.mkdir(rulesDir, { recursive: true });
 
+            // Determine source path for rules
+            // In VSIX, rules are in /kernel/rules/ (not in out/)
+            const rulesSourceDir = this.extensionPath 
+                ? path.join(this.extensionPath, 'kernel', 'rules')
+                : path.join(__dirname, '..', 'rules');
+
             // Install Agent System rules (highest priority)
             const systemRuleResult = await this.installRule(
                 'RL4.Agent.System.mdc',
-                path.join(__dirname, '..', 'rules', 'RL4.Agent.System.mdc'),
+                path.join(rulesSourceDir, 'RL4.Agent.System.mdc'),
                 rulesDir
             );
 
@@ -49,7 +55,7 @@ export class RulesInstaller {
             // Install Core governance rules (high priority)
             const coreRuleResult = await this.installRule(
                 'RL4.Core.mdc',
-                path.join(__dirname, '..', 'rules', 'RL4.Core.mdc'),
+                path.join(rulesSourceDir, 'RL4.Core.mdc'),
                 rulesDir
             );
 
@@ -127,7 +133,9 @@ export class RulesInstaller {
     async needsUpdate(): Promise<boolean> {
         try {
             const rulesDir = path.join(this.workspaceRoot, '.cursor', 'rules');
-            const sourceDir = path.join(__dirname, '..', 'rules');
+            const sourceDir = this.extensionPath 
+                ? path.join(this.extensionPath, 'kernel', 'rules')
+                : path.join(__dirname, '..', 'rules');
 
             for (const rule of ['RL4.Agent.System.mdc', 'RL4.Core.mdc']) {
                 const sourcePath = path.join(sourceDir, rule);

@@ -1,9 +1,10 @@
-import { RL4Event } from "../legacy/rl4/RL4Messages";
+import { RL4Event, MessageType, MessageSource } from "../legacy/rl4/RL4Messages";
 
 export interface PromptIntegrityResult {
   valid: boolean;
   issues: string[];
   warnings: string[];
+  sanitizedSections?: string[];
 }
 
 /**
@@ -112,7 +113,7 @@ export class PromptIntegrityValidator {
             valid: errors.length === 0,
             issues: errors,
             warnings: [], // TODO: implement warning detection,
-            sanitizedSections: sanitized
+            sanitizedSections: sanitized.map(s => s.id || 'unnamed')
         };
     }
 
@@ -193,7 +194,7 @@ export class PromptIntegrityValidator {
         const alerts: string[] = [];
 
         for (const ev of events) {
-            if (ev.type === "terminal.command" && /rm\s+-rf/.test(ev.payload?.cmd)) {
+            if (ev.source === MessageSource.TERMINAL && /rm\s+-rf/.test(ev.payload?.cmd)) {
                 alerts.push("Dangerous command detected in timeline.");
             }
         }
