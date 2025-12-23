@@ -6,7 +6,14 @@ module.exports = {
   output: {
     path: path.resolve(__dirname, 'out', 'webview'),
     filename: 'webview.js',
-    publicPath: './',
+    // Disable dynamic imports and code splitting completely
+    chunkLoading: false,
+    wasmLoading: false,
+    // Ensure single bundle
+    library: {
+      type: 'var',
+      name: 'RL4WebView',
+    },
   },
   module: {
     rules: [
@@ -23,17 +30,16 @@ module.exports = {
   },
   resolve: {
     extensions: ['.tsx', '.ts', '.js', '.jsx'],
-    alias: {
-      '@': path.resolve(__dirname, '.'),
-    },
   },
   optimization: {
-    minimize: true, // Enable minification for production
+    // Completely disable code splitting
+    splitChunks: false,
+    runtimeChunk: false,
+    // Disable module concatenation that might cause issues
+    concatenateModules: false,
   },
   externals: {
-    vscode: 'commonjs vscode', // VS Code API is provided by the host
+    vscode: 'commonjs vscode',
   },
-  // Don't bundle node_modules - they should be excluded from package
-  // React, React-DOM, Zustand will be bundled into webview.js
 };
 
