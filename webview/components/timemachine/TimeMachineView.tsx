@@ -13,7 +13,7 @@ export const TimeMachineView: React.FC = () => {
   const minDate = useStore((s) => s.minDate);
   const maxDate = useStore((s) => s.maxDate);
   const loading = useStore((s) => s.loading);
-  const prompt = useStore((s) => s.prompt);
+  const prompt = useStore((s) => s.timeMachinePrompt);
   const error = useStore((s) => s.error);
   const { buildPrompt, loadTimelineRange } = useTimeMachine();
 

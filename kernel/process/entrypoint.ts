@@ -25,7 +25,6 @@ import { GovernanceModeManager } from '../api/GovernanceModeManager';
 import { UnifiedPromptBuilder } from '../api/UnifiedPromptBuilder';
 import { PlanTasksContextParser } from '../api/PlanTasksContextParser';
 import { detectWorkspaceState } from '../onboarding/OnboardingDetector';
-import { AnomalyDetector } from '../api/AnomalyDetector';
 import { DeltaCalculator } from '../api/DeltaCalculator';
 import { SessionCaptureManager } from '../api/SessionCaptureManager';
 import { TaskManager } from '../api/TaskManager';
@@ -43,6 +42,13 @@ import { ActivityReconstructor } from '../api/ActivityReconstructor';
 import { TimelineAggregator } from '../indexer/TimelineAggregator';
 import { MIL } from '../memory/MIL';
 import { CursorChatListener } from '../inputs/CursorChatListener';
+import { DecisionStore } from '../cognitive/DecisionStore';
+import { DecisionExtractor } from '../cognitive/DecisionExtractor';
+import { DecisionInvalidator } from '../cognitive/DecisionInvalidator';
+import { RCEPStore } from '../storage/RCEPStore';
+import { SCFCompressor } from '../scf/SCFCompressor';
+import { ReplayEngine } from '../replay/ReplayEngine';
+import { PromptCodecRL4 } from '../rl4/PromptCodecRL4';
 
 // Global kernel components (accessible to IPC handlers)
 let kernelComponents: {
@@ -67,7 +73,6 @@ let kernelComponents: {
     timelineAggregator?: TimelineAggregator;
     cyclesWriter?: AppendOnlyWriter;
     // onboardingDetector is a function, not an instance
-    anomalyDetector: AnomalyDetector;
     deltaCalculator: DeltaCalculator;
     sessionCaptureManager: SessionCaptureManager;
     taskManager: TaskManager;
@@ -76,6 +81,12 @@ let kernelComponents: {
     timeMachinePromptBuilder: TimeMachinePromptBuilder;
     intentionResolver: IntentionResolver;
     mil?: MIL;
+    decisionStore?: DecisionStore;
+    rcepStore?: RCEPStore;
+    scfCompressor?: SCFCompressor;
+    replayEngine?: ReplayEngine;
+    decisionInvalidator?: DecisionInvalidator;
+    decisionExtractor?: DecisionExtractor;
 } | null = null;
 
 /**
@@ -359,8 +370,14 @@ async function handleQuery(msg: any): Promise<void> {
             }
 
             case 'get_blindspots': {
-                const blindspots = await (kernelComponents as any).anomalyDetector.detectBlindspots();
-                data = blindspots;
+                // DEPRECATED: AnomalyDetector removed (violation Loi 1)
+                // Blind spots detection should be done by LLM via prompts, not kernel
+                data = {
+                    bursts: 0,
+                    gaps: 0,
+                    samples: 0,
+                    signals: []
+                };
                 break;
             }
 
@@ -391,6 +408,124 @@ async function handleQuery(msg: any): Promise<void> {
             case 'get_system_status': {
                 const status = await (kernelComponents as any).systemStatusProvider.getSystemStatus();
                 data = status;
+                break;
+            }
+
+            case 'process_llm_response': {
+                // ⚠️ PHASE 4 : Extraction et stockage des décisions cognitives
+                const decisionExtractor = (kernelComponents as any).decisionExtractor;
+                const decisionStore = (kernelComponents as any).decisionStore;
+                
+                if (!decisionExtractor || !decisionStore) {
+                    throw new Error('DecisionExtractor or DecisionStore not initialized');
+                }
+                
+                const { response, rcepRef } = payload;
+                if (!response || !rcepRef) {
+                    throw new Error('Missing response or rcepRef');
+                }
+                
+                // Extraire les décisions depuis la réponse LLM
+                const decisions = await decisionExtractor.extractFromResponse(response, rcepRef);
+                
+                // Stocker chaque décision
+                let storedCount = 0;
+                for (const decision of decisions) {
+                    try {
+                        await decisionStore.store(decision);
+                        storedCount++;
+                    } catch (error: any) {
+                        kernelComponents.logger?.error?.(`Failed to store decision ${decision.id}: ${error.message}`);
+                    }
+                }
+                
+                data = {
+                    decisions: decisions.map(d => ({ id: d.id, intent: d.intent, confidence_llm: d.confidence_llm, confidence_gate: d.confidence_gate })),
+                    count: storedCount
+                };
+                break;
+            }
+
+            case 'get_decisions': {
+                // ⚠️ PHASE 10 : Récupérer les décisions par time range
+                const decisionStore = (kernelComponents as any).decisionStore;
+                
+                if (!decisionStore) {
+                    throw new Error('DecisionStore not initialized');
+                }
+                
+                const { startTime, endTime } = payload;
+                if (typeof startTime !== 'number' || typeof endTime !== 'number') {
+                    throw new Error('Missing or invalid startTime/endTime');
+                }
+                
+                const decisions = await decisionStore.getByTimeRange(startTime, endTime);
+                
+                data = {
+                    decisions: decisions.map(d => ({
+                        id: d.id,
+                        intent: d.intent,
+                        intent_text: d.intent_text,
+                        confidence_llm: d.confidence_llm,
+                        confidence_gate: d.confidence_gate,
+                        timestamp: d.timestamp,
+                        isoTimestamp: d.isoTimestamp,
+                        context_refs: d.context_refs,
+                        chosen_option: d.chosen_option,
+                        validation_status: d.validation_status
+                    })),
+                    count: decisions.length
+                };
+                break;
+            }
+
+            case 'replay_trajectory': {
+                // ⚠️ PHASE 6 : Replay déterministe d'une trajectoire cognitive
+                const replayEngine = (kernelComponents as any).replayEngine;
+                
+                if (!replayEngine) {
+                    throw new Error('ReplayEngine not initialized');
+                }
+                
+                const { startTime, endTime, anchorEventId } = payload;
+                if (typeof startTime !== 'number' || typeof endTime !== 'number') {
+                    throw new Error('Missing or invalid startTime/endTime');
+                }
+                
+                const replayResult = await replayEngine.replay(startTime, endTime, anchorEventId);
+                
+                data = {
+                    events: replayResult.events.map(e => ({
+                        id: e.id,
+                        seq: e.seq,
+                        timestamp: e.timestamp,
+                        type: e.type,
+                        source: e.source,
+                        category: e.category
+                    })),
+                    decisions: replayResult.decisions.map(d => ({
+                        id: d.id,
+                        intent: d.intent,
+                        confidence_llm: d.confidence_llm,
+                        confidence_gate: d.confidence_gate,
+                        timestamp: d.timestamp
+                    })),
+                    hash: replayResult.hash,
+                    timestamp: replayResult.timestamp
+                };
+                break;
+            }
+
+            case 'rebuild_cache': {
+                const cacheIndexer = (kernelComponents as any).cacheIndexer;
+                if (!cacheIndexer) {
+                    throw new Error('CacheIndexer not initialized');
+                }
+                const index = await cacheIndexer.rebuild();
+                data = {
+                    success: true,
+                    cyclesIndexed: index.total_cycles
+                };
                 break;
             }
 
@@ -616,11 +751,11 @@ async function main() {
     // RBOM kernel_start event
     await rbomLedger.append('kernel_start', { workspaceRoot, timestamp: new Date().toISOString() });
 
-    // Initialize governance mode manager and prompt builder
+    // Initialize governance mode manager and plan parser
     const rl4Path = path.join(workspaceRoot, '.reasoning_rl4', 'governance');
     const governanceModeManager = new GovernanceModeManager(rl4Path);
     const planParser = new PlanTasksContextParser(rl4Path);
-    const promptBuilder = new UnifiedPromptBuilder(rl4Path, logger, mil);
+    // promptBuilder will be initialized later after DecisionStore, RCEPStore, SCFCompressor
 
     // Push governance mode into StateRegistry at boot
     const activeMode = governanceModeManager.getActiveMode();
@@ -631,9 +766,8 @@ async function main() {
     // Initialize new components
     // OnboardingDetector is a function, not a class
 
-    console.log(`[DIAG] [${Date.now()}] Init start: AnomalyDetector`);
-    const anomalyDetector = new AnomalyDetector(workspaceRoot, appendWriter, logger);
-    console.log(`[DIAG] [${Date.now()}] Init done: AnomalyDetector`);
+    // DEPRECATED: AnomalyDetector removed (violation Loi 1)
+    // Blind spots detection should be done by LLM via prompts, not kernel
 
     console.log(`[DIAG] [${Date.now()}] Init start: DeltaCalculator`);
     const deltaCalculator = new DeltaCalculator(workspaceRoot, logger);
@@ -665,8 +799,39 @@ async function main() {
     const systemStatusProvider = new SystemStatusProvider(workspaceRoot, logger);
     console.log(`[DIAG] [${Date.now()}] Init done: SystemStatusProvider`);
 
+    // ⚠️ PHASE 11 : Initialize DecisionStore, RCEPStore, SCFCompressor, ReplayEngine, DecisionInvalidator, DecisionExtractor
+    console.log(`[DIAG] [${Date.now()}] Init start: DecisionStore`);
+    const decisionStore = new DecisionStore(workspaceRoot);
+    await decisionStore.init();
+    console.log(`[DIAG] [${Date.now()}] Init done: DecisionStore`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: RCEPStore`);
+    const rcepStore = new RCEPStore(workspaceRoot);
+    console.log(`[DIAG] [${Date.now()}] Init done: RCEPStore`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: SCFCompressor`);
+    const scfCompressor = new SCFCompressor(mil, decisionStore, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: SCFCompressor`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: ReplayEngine`);
+    const rcepDecoder = new PromptCodecRL4();
+    const replayEngine = new ReplayEngine(mil, decisionStore, rcepStore, scfCompressor, rcepDecoder, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: ReplayEngine`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: DecisionInvalidator`);
+    const decisionInvalidator = new DecisionInvalidator(decisionStore, mil, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: DecisionInvalidator`);
+
+    console.log(`[DIAG] [${Date.now()}] Init start: DecisionExtractor`);
+    const decisionExtractor = new DecisionExtractor(decisionStore, mil, logger);
+    console.log(`[DIAG] [${Date.now()}] Init done: DecisionExtractor`);
+
+    // Update UnifiedPromptBuilder with new components
+    console.log(`[DIAG] [${Date.now()}] Updating UnifiedPromptBuilder with DecisionStore, RCEPStore, SCFCompressor`);
+    const promptBuilder = new UnifiedPromptBuilder(rl4Path, logger, mil, decisionStore, rcepStore, scfCompressor);
+
     console.log(`[DIAG] [${Date.now()}] Init start: TimeMachinePromptBuilder`);
-    const timeMachinePromptBuilder = new TimeMachinePromptBuilder(workspaceRoot, logger, mil);
+    const timeMachinePromptBuilder = new TimeMachinePromptBuilder(workspaceRoot, logger, mil, decisionStore, rcepStore, scfCompressor, replayEngine);
     console.log(`[DIAG] [${Date.now()}] Init done: TimeMachinePromptBuilder`);
 
     console.log(`[DIAG] [${Date.now()}] Init start: IntentionResolver`);
@@ -711,8 +876,8 @@ async function main() {
         gitCommitsWriter,
         governanceModeManager,
         planParser,
+        planTasksContextParser: planParser, // Alias for IPC handlers
         promptBuilder,
-        anomalyDetector,
         deltaCalculator,
         sessionCaptureManager,
         taskManager,
@@ -720,7 +885,13 @@ async function main() {
         systemStatusProvider,
         timeMachinePromptBuilder,
         intentionResolver,
-        mil
+        mil,
+        decisionStore,
+        rcepStore,
+        scfCompressor,
+        replayEngine,
+        decisionInvalidator,
+        decisionExtractor
     } as any;
 
     // Setup IPC message handler (for fork-based communication)

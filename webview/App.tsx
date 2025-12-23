@@ -4,6 +4,7 @@ import { dispatchMessage } from './handlers/messageRouter';
 import { useKernelHydrator } from './hooks/useKernelHydrator';
 import { useAutoRefresh } from './hooks/useAutoRefresh';
 import { useVSCodeTheme } from './hooks/useVSCodeTheme';
+import { useWindowResize } from './hooks/useWindowResize';
 import { KernelReadyGate } from './components/KernelReadyGate';
 import { WebViewFrame } from './components/layout/WebViewFrame';
 import { Header } from './components/layout/Header';
@@ -20,6 +21,7 @@ import { TrackedItems } from './components/dev/TrackedItems';
 import { InsightsView } from './components/insights/InsightsView';
 import { TimeMachineView } from './components/timemachine/TimeMachineView';
 import { AboutView } from './components/about/AboutView';
+import { RebuildView } from './components/rebuild/RebuildView';
 
 const getVsCodeApi = () => {
   if (window.vscode) return window.vscode;
@@ -34,6 +36,7 @@ const vscode = getVsCodeApi();
 
 export default function App() {
   const activeTab = useStore((s) => s.activeTab);
+  const setActiveTab = useStore((s) => s.setActiveTab);
   const workspace = useStore((s) => s.workspace);
   const mode = useStore((s) => s.mode);
   const onboardingComplete = useStore((s) => s.onboardingComplete);
@@ -43,6 +46,11 @@ export default function App() {
   useKernelHydrator();
   useAutoRefresh();
   useVSCodeTheme();
+  
+  // Resize observer global (passif pour l'instant, optimise les recalculs)
+  useWindowResize(() => {
+    // Callback passif pour l'instant - évite les comportements dangereux au resize
+  }, 100);
 
   // Message listener
   useEffect(() => {
@@ -92,6 +100,8 @@ export default function App() {
         return <TimeMachineView />;
       case 'about':
         return <AboutView />;
+      case 'rebuild':
+        return <RebuildView />;
       default:
         return null;
     }
@@ -103,7 +113,7 @@ export default function App() {
         <Header />
         <div className="nav">
           <Breadcrumb activeTab={activeTab} />
-          <TabNav active={activeTab} onChange={(tab) => useStore.getState().setActiveTab(tab)} />
+          <TabNav active={activeTab} onChange={setActiveTab} />
         </div>
         <main className="content">
           {renderContent()}

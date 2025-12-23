@@ -20,10 +20,10 @@ export function useKernelHydrator() {
     if (hydrated.current) return;
     hydrated.current = true;
 
-    const hydrate = async () => {
+    const hydrate = () => {
       try {
         setBootPhase('detecting');
-        vscode.postMessage({ type: 'rl4:getWorkspaceState' });
+        vscode.postMessage({ type: 'rl4:getWorkspaceState', payload: {} });
 
         setBootPhase('hydrating');
         const calls = [
@@ -34,7 +34,16 @@ export function useKernelHydrator() {
           'getAutoTasksCount',
           'status',
         ];
-        calls.forEach((c) => vscode.postMessage({ type: `rl4:${c}` }));
+
+        // Execute all hydration calls in parallel (fire-and-forget)
+        calls.forEach(c => {
+          vscode.postMessage({ type: `rl4:${c}`, payload: {} });
+        });
+
+        // Set ready after a short delay to allow responses to arrive
+        setTimeout(() => {
+        setBootPhase('ready');
+        }, 500);
       } catch (err) {
         console.error('[Hydrator] Failed:', err);
         setBootPhase('error');

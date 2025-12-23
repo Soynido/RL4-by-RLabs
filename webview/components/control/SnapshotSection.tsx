@@ -31,6 +31,10 @@ export const SnapshotSection: React.FC = () => {
     generateSnapshot(mode);
   };
 
+  const handleOpenPlan = () => {
+    vscode.postMessage({ type: 'rl4:openPlan', payload: {} });
+  };
+
   return (
     <Card className="snapshot-section" padded>
       <div className="snapshot-header">
@@ -49,6 +53,7 @@ export const SnapshotSection: React.FC = () => {
           </p>
         )}
       </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <Button
         variant="primary"
         block
@@ -57,6 +62,14 @@ export const SnapshotSection: React.FC = () => {
       >
         {loading ? 'Generating...' : 'Generate Snapshot'}
       </Button>
+        <Button
+          variant="secondary"
+          block
+          onClick={handleOpenPlan}
+        >
+          Open Plan.RL4
+        </Button>
+      </div>
     </Card>
   );
 };

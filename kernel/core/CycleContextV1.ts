@@ -11,7 +11,6 @@
  *   - ProjectAnalyzer
  *   - FileChangeWatcher
  *   - GitCommitListener
- *   - ModesSystem
  *   - KernelAPI
  *
  * UnifiedPromptBuilder consumes this structure directly and enriches it via LLM.

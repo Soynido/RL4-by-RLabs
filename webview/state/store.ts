@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import {
   StoreState,
 } from './types';
@@ -12,9 +13,18 @@ type PartialState = Partial<StoreState> | ((state: StoreState) => Partial<StoreS
 
 const state: StoreState = {} as StoreState;
 
+// Subscription system for reactivity
+type Listener = () => void;
+const listeners = new Set<Listener>();
+
+const notifyListeners = () => {
+  listeners.forEach((listener) => listener());
+};
+
 const setState = (partial: PartialState) => {
   const next = typeof partial === 'function' ? (partial as any)(state) : partial;
   Object.assign(state, next);
+  notifyListeners();
 };
 
 const getState = () => state;
@@ -30,14 +40,41 @@ Object.assign(
   createSnapshotSlice(setState, getState),
 );
 
-// Minimal hook-compatible API
+// Reactive hook-compatible API
 type Selector<T> = (state: StoreState) => T;
 
-export const useStore: any = Object.assign(
-  (selector?: Selector<any>) => (selector ? selector(state) : state),
-  {
-    getState,
-    setState,
-  }
-);
+type UseStoreHook = {
+  <T = StoreState>(selector?: Selector<T>): T;
+  getState: () => StoreState;
+  setState: (partial: PartialState) => void;
+};
+
+const useStoreImpl = <T = StoreState>(selector?: Selector<T>): T => {
+  const [, forceUpdate] = useState({});
+  const selectorRef = useRef(selector);
+  const valueRef = useRef<T>(selector ? selector(state) : (state as any));
+
+  selectorRef.current = selector;
+
+  useEffect(() => {
+    const listener = () => {
+      const newValue = selectorRef.current ? selectorRef.current(state) : (state as any);
+      if (newValue !== valueRef.current) {
+        valueRef.current = newValue;
+        forceUpdate({});
+      }
+    };
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, []);
+
+  return valueRef.current;
+};
+
+// Attach getState and setState to useStore for backward compatibility
+export const useStore = useStoreImpl as UseStoreHook;
+(useStore as any).getState = getState;
+(useStore as any).setState = setState;
 

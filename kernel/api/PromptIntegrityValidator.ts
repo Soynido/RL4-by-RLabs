@@ -21,7 +21,7 @@ export interface PromptIntegrityResult {
  *
  * Why RL6 needs this:
  *   UnifiedPromptBuilder produces high-density prompts from:
- *    - HistorySummarizer
+ *    - DEPRECATED: HistorySummarizer removed (violation Loi 1)
  *    - CodeStateAnalyzer
  *    - Pattern signals
  *    - MIL-style structural pointers (future compatible)

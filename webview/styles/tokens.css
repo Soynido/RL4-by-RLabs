@@ -49,5 +49,20 @@
   /* Typography */
   --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
   --font-mono: 'Geist Mono', 'Fira Code', monospace;
+
+  /* Z-index stacking context */
+  --z-base: 0;
+  --z-dropdown: 1000;
+  --z-sticky: 1100;
+  --z-modal: 2000;
+  --z-tooltip: 3000;
+
+  /* Icon sizes */
+  --icon-xs: 12px;
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 24px;
+  --icon-xl: 32px;
+  --icon-2xl: 48px;
 }
 

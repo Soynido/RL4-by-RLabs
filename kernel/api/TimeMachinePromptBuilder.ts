@@ -94,16 +94,34 @@ interface TimeMachinePromptData {
     ledgerState?: LedgerStateSummary;
     modifiedFiles: string[];
     milEvents?: any[]; // MIL unified events
+    decisions?: any[]; // Cognitive decisions
+    replayHash?: string; // Deterministic replay hash
 }
 
 export class TimeMachinePromptBuilder {
     private timelineAggregator: TimelineAggregator;
     private diagnosticsPath: string;
     private mil?: MIL;
+    private decisionStore?: any; // DecisionStore
+    private rcepStore?: any; // RCEPStore
+    private scfCompressor?: any; // SCFCompressor
+    private replayEngine?: any; // ReplayEngine
 
-    constructor(private workspaceRoot: string, private logger?: CognitiveLogger, mil?: MIL) {
+    constructor(
+        private workspaceRoot: string,
+        private logger?: CognitiveLogger,
+        mil?: MIL,
+        decisionStore?: any,
+        rcepStore?: any,
+        scfCompressor?: any,
+        replayEngine?: any
+    ) {
         this.timelineAggregator = new TimelineAggregator(workspaceRoot);
         this.mil = mil;
+        this.decisionStore = decisionStore;
+        this.rcepStore = rcepStore;
+        this.scfCompressor = scfCompressor;
+        this.replayEngine = replayEngine;
         this.diagnosticsPath = path.join(workspaceRoot, '.reasoning_rl4', 'diagnostics', 'history-prompts');
         if (!fs.existsSync(this.diagnosticsPath)) {
             fs.mkdirSync(this.diagnosticsPath, { recursive: true });
@@ -150,6 +168,25 @@ export class TimeMachinePromptBuilder {
             }
         }
 
+        // ⚠️ PHASE 8 : Load decisions and RCEP blobs, reconstruct SCF, calculate replay hash
+        let decisions: any[] = [];
+        let replayHash: string | null = null;
+        if (this.decisionStore && this.rcepStore && this.replayEngine) {
+            try {
+                const startMs = startDate.getTime();
+                const endMs = endDate.getTime();
+                
+                // Load decisions
+                decisions = await this.decisionStore.getByTimeRange(startMs, endMs);
+                
+                // Replay trajectory to get hash
+                const replayResult = await this.replayEngine.replay(startMs, endMs);
+                replayHash = replayResult.hash;
+            } catch (error) {
+                this.logger?.warning?.(`Failed to load decisions or calculate replay hash: ${error}`);
+            }
+        }
+
         const prompt = this.composePrompt({
             start: startDate,
             end: endDate,
@@ -166,7 +203,9 @@ export class TimeMachinePromptBuilder {
             contextSummary,
             ledgerState,
             modifiedFiles,
-            milEvents: milEvents.length > 0 ? milEvents : undefined
+            milEvents: milEvents.length > 0 ? milEvents : undefined,
+            decisions: decisions.length > 0 ? decisions : undefined,
+            replayHash: replayHash || undefined
         });
 
         const finalBytes = Buffer.byteLength(prompt, 'utf-8');
@@ -310,6 +349,47 @@ export class TimeMachinePromptBuilder {
         sections.push('');
         sections.push('---');
         sections.push('');
+        
+        // ⚠️ PHASE 8 : Add cognitive decisions section
+        if (data.decisions && data.decisions.length > 0) {
+            sections.push('## 8. Cognitive Decisions');
+            sections.push(`Total decisions: ${data.decisions.length}`);
+            sections.push('');
+            sections.push('Decisions made during this period:');
+            sections.push('```json');
+            // Show first 10 decisions
+            const decisionsToShow = data.decisions.slice(0, 10);
+            for (const decision of decisionsToShow) {
+                sections.push(JSON.stringify({
+                    id: decision.id,
+                    intent: decision.intent,
+                    confidence_llm: decision.confidence_llm,
+                    confidence_gate: decision.confidence_gate,
+                    chosen_option: decision.chosen_option,
+                    timestamp: decision.isoTimestamp
+                }, null, 2));
+            }
+            if (data.decisions.length > 10) {
+                sections.push(`... (${data.decisions.length - 10} more decisions)`);
+            }
+            sections.push('```');
+            sections.push('');
+            sections.push('---');
+            sections.push('');
+        }
+        
+        // ⚠️ PHASE 8 : Add replay hash section
+        if (data.replayHash) {
+            sections.push('## 9. Replay Hash (Deterministic)');
+            sections.push(`Replay hash: \`${data.replayHash}\``);
+            sections.push('');
+            sections.push('This hash is deterministically calculated from events, decisions, and SCF.');
+            sections.push('Same inputs → same hash. Different cognition → different hash.');
+            sections.push('');
+            sections.push('---');
+            sections.push('');
+        }
+        
         sections.push('## Question');
         sections.push(`What did we achieve between ${data.start.toISOString()} and ${data.end.toISOString()} and why?`);
         sections.push('');

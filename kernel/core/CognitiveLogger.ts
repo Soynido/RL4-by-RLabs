@@ -287,6 +287,27 @@ export class CognitiveLogger implements ILogger {
         this.system(`✅ ${msg}`);
     }
 
+    /**
+     * ✅ Memory leak testing: Log memory usage to output channel
+     */
+    logMemoryUsage(phase: 'activate' | 'deactivate'): void {
+        if (this.verbosity === "silent") return;
+        
+        const mem = process.memoryUsage();
+        const formatMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
+        
+        this.line('');
+        this.line('═══════════════════════════════════════════════════════');
+        this.write(`📊 Memory Usage (${phase}):`);
+        this.write(`   RSS: ${formatMB(mem.rss)} MB (Resident Set Size - total memory)`);
+        this.write(`   Heap Used: ${formatMB(mem.heapUsed)} MB`);
+        this.write(`   Heap Total: ${formatMB(mem.heapTotal)} MB`);
+        this.write(`   External: ${formatMB(mem.external)} MB`);
+        this.write(`   Array Buffers: ${formatMB(mem.arrayBuffers)} MB`);
+        this.line('═══════════════════════════════════════════════════════');
+        this.line('');
+    }
+
     verbose(msg: string): void {
         if (this.verbosity === "debug") {
             this.system(`[VERBOSE] ${msg}`);

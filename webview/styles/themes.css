@@ -1,0 +1,48 @@
+/* Theme-specific CSS variables applied via data-theme attribute */
+
+:root[data-theme="ghost"] {
+  --bg-primary: #05070a;
+  --bg-secondary: #080d16;
+  --bg-surface: rgba(132, 165, 255, 0.08);
+  --bg-surface-hover: rgba(132, 165, 255, 0.12);
+  --border-default: rgba(132, 165, 255, 0.2);
+  --border-hover: rgba(132, 165, 255, 0.35);
+  --border-active: rgba(132, 165, 255, 0.5);
+  --text-primary: #e3f0ff;
+  --text-secondary: rgba(227, 240, 255, 0.7);
+  --text-muted: rgba(169, 184, 214, 0.6);
+  --cta-gradient: linear-gradient(135deg, #84a5ff, #a7c0ff);
+  --cta-shadow: 0 0 18px rgba(132, 165, 255, 0.25);
+}
+
+:root[data-theme="mint"] {
+  --bg-primary: #030806;
+  --bg-secondary: #06110c;
+  --bg-surface: rgba(117, 255, 186, 0.08);
+  --bg-surface-hover: rgba(117, 255, 186, 0.12);
+  --border-default: rgba(117, 255, 186, 0.2);
+  --border-hover: rgba(117, 255, 186, 0.35);
+  --border-active: rgba(117, 255, 186, 0.5);
+  --text-primary: #dcffec;
+  --text-secondary: rgba(220, 255, 236, 0.7);
+  --text-muted: rgba(154, 219, 189, 0.6);
+  --cta-gradient: linear-gradient(135deg, #75ffba, #a4ffd3);
+  --cta-shadow: 0 0 18px rgba(117, 255, 186, 0.25);
+}
+
+:root[data-theme="uv"] {
+  --bg-primary: #080716;
+  --bg-secondary: #120f24;
+  --bg-surface: rgba(180, 90, 255, 0.08);
+  --bg-surface-hover: rgba(180, 90, 255, 0.12);
+  --border-default: rgba(180, 90, 255, 0.2);
+  --border-hover: rgba(180, 90, 255, 0.35);
+  --border-active: rgba(180, 90, 255, 0.5);
+  --text-primary: #e6d7ff;
+  --text-secondary: rgba(230, 215, 255, 0.7);
+  --text-muted: rgba(187, 166, 229, 0.6);
+  --cta-gradient: linear-gradient(135deg, #b45aff, #e073ff);
+  --cta-shadow: 0 0 18px rgba(180, 90, 255, 0.25);
+}
+
+

@@ -21,7 +21,7 @@
     "assistant"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "*"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -41,6 +41,10 @@
       {
         "command": "rl4.repairKernel",
         "title": "Repair RL4 Kernel"
+      },
+      {
+        "command": "rl4.openWebview",
+        "title": "Open RL4 Dashboard"
       },
       {
         "command": "rl4.toggleWebview",
@@ -92,12 +96,23 @@
           "icon": "media/rl4-activity-bar.svg"
         }
       ]
+    },
+    "configuration": {
+      "title": "RL4 by RLabs",
+      "properties": {
+        "rpcFileLoggerFolder": {
+          "type": "string",
+          "default": "",
+          "description": "Folder for RPC file logging (legacy setting)",
+          "scope": "window"
+        }
+      }
     }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "npm run compile:extension && npm run compile:webview",
-    "compile:extension": "tsc -p ./ && webpack --mode production --config webpack.config.js",
+    "compile:extension": "webpack --mode production --config webpack.config.js",
     "compile:webview": "webpack --mode production --config webpack.webview.config.js && mkdir -p out/webview && cp webview/index.html out/webview/index.html && npm run clean:webview",
     "clean:webview": "find out/webview -name '*.js' ! -name 'webview.js' -type f -delete && find out/webview -name '*.map' -type f -delete && find out/webview -type d -empty -delete",
     "watch": "tsc -watch -p ./",
@@ -124,14 +139,14 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "@types/react": "^19.2.7",
-    "@types/react-dom": "^19.2.3",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
     "better-sqlite3": "^9.0.0",
     "cbor-x": "^1.6.0",
     "chokidar": "^5.0.0",
     "js-yaml": "^4.1.1",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "uuid": "^8.3.2",
     "zod": "^3.25.76",
     "zustand": "^5.0.9"

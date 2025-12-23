@@ -28,6 +28,11 @@ export class KernelBridge extends EventEmitter {
     private readonly MAX_QUICK_RESTARTS = 5;
     private isSafeMode: boolean = false;
 
+    // ✅ P0.2: Stop guard and timer cleanup
+    private isStopped: boolean = false;
+    private killTimer: NodeJS.Timeout | null = null;
+    private restartTimer: NodeJS.Timeout | null = null;
+
     // Replay Buffer
     private queuedEvents: QueuedEvent[] = [];
     private lastAckedSeq: number = 0;
@@ -37,6 +42,9 @@ export class KernelBridge extends EventEmitter {
     
     // ✅ PID Lock for Zombie Killing
     private pidFile: string;
+
+    // ✅ P0.1: Stream handlers for cleanup
+    private streamHandlers: { stdout?: NodeJS.ReadableStream; stderr?: NodeJS.ReadableStream } = {};
 
     constructor(extensionPath: string, logger: ILogger) {
         super();
@@ -122,6 +130,9 @@ export class KernelBridge extends EventEmitter {
     }
 
     public async start(): Promise<void> {
+        // ✅ P0.2: Reset stop guard at start
+        this.isStopped = false;
+
         if (this.isSafeMode) {
             this.logger.warning('[KernelBridge] Cannot start: Safe Mode active due to crash loop.');
             return;
@@ -258,6 +269,10 @@ export class KernelBridge extends EventEmitter {
     private setupStreamHandlers(): void {
         if (!this.child) return;
 
+        // ✅ P0.1: Store stream references for cleanup
+        this.streamHandlers.stdout = this.child.stdout || undefined;
+        this.streamHandlers.stderr = this.child.stderr || undefined;
+
         this.child.stdout?.on('data', (data: any) => {
             const str = data.toString();
             str.split('\n').forEach((line: string) => {
@@ -282,10 +297,28 @@ export class KernelBridge extends EventEmitter {
 
     // ✅ HARDENED STOP (P0)
     public stop(): void {
+        // ✅ P0.2: Set stop guard to prevent restart after stop
+        this.isStopped = true;
+
+        // ✅ P0.2: Clear restart timer if pending
+        if (this.restartTimer) {
+            clearTimeout(this.restartTimer);
+            this.restartTimer = null;
+        }
+
         if (this.heartbeatInterval) {
             clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = null;
         }
+        
+        // ✅ P0.1: Cleanup stream handlers before stopping child
+        if (this.streamHandlers.stdout) {
+            this.streamHandlers.stdout.removeAllListeners();
+        }
+        if (this.streamHandlers.stderr) {
+            this.streamHandlers.stderr.removeAllListeners();
+        }
+        this.streamHandlers = {};
         
         const childToKill = this.child;
         this.child = null; // Detach immediately to prevent race conditions
@@ -296,6 +329,12 @@ export class KernelBridge extends EventEmitter {
             if (fs.existsSync(this.pidFile)) fs.unlinkSync(this.pidFile);
         } catch {}
 
+        // ✅ P0.2: Clear existing killTimer if any (defensive - in case stop() called multiple times)
+        if (this.killTimer) {
+            clearTimeout(this.killTimer);
+            this.killTimer = null;
+        }
+
         if (childToKill) {
             this.logger.system('[KernelBridge] 🛑 Stopping child process...');
             
@@ -305,8 +344,9 @@ export class KernelBridge extends EventEmitter {
             // Try SIGTERM first (Graceful)
             childToKill.kill('SIGTERM');
             
+            // ✅ P0.2: Store killTimer reference for cleanup
             // Force SIGKILL if still alive after 500ms
-            const killTimer = setTimeout(() => {
+            this.killTimer = setTimeout(() => {
                 if (!childToKill.killed) {
                     this.logger.system('[KernelBridge] 💀 Force killing child process (SIGKILL)');
                     try {
@@ -315,10 +355,11 @@ export class KernelBridge extends EventEmitter {
                         // Ignore if already dead
                     }
                 }
+                this.killTimer = null; // Clear after execution
             }, 500);
 
             // Unref to prevent holding up node process exit
-            if (killTimer.unref) killTimer.unref();
+            if (this.killTimer.unref) this.killTimer.unref();
         }
     }
 
@@ -327,6 +368,12 @@ export class KernelBridge extends EventEmitter {
     }
 
     private handleCrashLogic(manual: boolean = false): void {
+        // ✅ P0.2: Don't schedule restart if stopped
+        if (this.isStopped) {
+            this.logger.system('[KernelBridge] Stop guard active, skipping restart');
+            return;
+        }
+
         const now = Date.now();
         this.restartTimestamps = this.restartTimestamps.filter(t => now - t < this.CRASH_WINDOW);
         
@@ -342,10 +389,22 @@ export class KernelBridge extends EventEmitter {
 
         if (!manual) {
             this.logger.system(`[KernelBridge] Auto-restarting (Attempt ${this.restartTimestamps.length}/${this.MAX_QUICK_RESTARTS})...`);
-            setTimeout(() => this.start(), 1000);
+            // ✅ P0.2: Store restart timer reference
+            this.restartTimer = setTimeout(() => {
+                if (!this.isStopped) {
+                    this.start();
+                }
+                this.restartTimer = null; // Clear after execution
+            }, 1000);
         } else {
              this.logger.system(`[KernelBridge] Manual restart triggering start...`);
-             setTimeout(() => this.start(), 1000);
+             // ✅ P0.2: Store restart timer reference
+             this.restartTimer = setTimeout(() => {
+                 if (!this.isStopped) {
+                     this.start();
+                 }
+                 this.restartTimer = null; // Clear after execution
+             }, 1000);
         }
     }
 

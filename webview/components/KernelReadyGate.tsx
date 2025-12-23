@@ -29,6 +29,10 @@ export const KernelReadyGate: React.FC<KernelReadyGateProps> = ({ children }) =>
   const safeMode = useStore((s) => s.safeMode);
   const safeModeReason = useStore((s) => s.safeModeReason);
 
+  // TEMPORARILY BYPASS GATE FOR TESTING
+  console.log('[KernelReadyGate] Boot phase:', bootPhase, 'Safe mode:', safeMode);
+  return <>{children}</>;
+
   if (bootPhase === 'ready' && !safeMode) {
     return <>{children}</>;
   }

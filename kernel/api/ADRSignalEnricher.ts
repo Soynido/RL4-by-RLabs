@@ -1,5 +1,4 @@
 import { ParsedADR } from "./ADRParser";
-import { SummarizedHistory } from "./HistorySummarizer";
 
 export interface EnrichedADRSignal {
     adrId: string;
@@ -18,12 +17,10 @@ export class ADRSignalEnricher {
      *
      * @param intent - developer intent extracted from UnifiedPromptBuilder
      * @param adrs - parsed ADRs from ADRParser
-     * @param history - summarized history (optional, can provide context)
      */
     enrich(
         intent: string,
-        adrs: ParsedADR[],
-        history?: SummarizedHistory
+        adrs: ParsedADR[]
     ): EnrichedADRSignal[] {
 
         const text = intent.toLowerCase();

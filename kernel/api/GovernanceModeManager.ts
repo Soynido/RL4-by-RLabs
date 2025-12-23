@@ -3,7 +3,7 @@
  * 
  * Module pour lire/écrire le mode gouvernance depuis Context.RL4 frontmatter
  * 
- * Différent de ModesSystem (modes kernel: stable/exploratory/etc.)
+ * Gère les modes de gouvernance (strict/flexible/exploratory/free)
  * Ce module gère les modes gouvernance pour l'UI/webview
  */
 

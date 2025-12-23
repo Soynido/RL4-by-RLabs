@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { AppendOnlyWriter } from '../AppendOnlyWriter';
+import { AppendOnlyWriter, OverflowStrategy } from '../AppendOnlyWriter';
 import * as vscode from 'vscode';
 import { ILogger } from '../core/ILogger';
 
@@ -41,6 +41,7 @@ export class BuildMetricsListener {
     private bundleFilePath: string;
     private disposables: vscode.Disposable[] = []; // ✅ NEW: Track disposables
     private bundleMonitorInterval: NodeJS.Timeout | null = null; // ✅ NEW: Track interval
+    private readonly MAX_PENDING_METRICS = 100;  // NEW: Maximum queue size
     private pendingMetrics: BuildMetrics[] = [];
     private metricsFlushTimer: NodeJS.Timeout | null = null;
     private readonly aggregationWindowMs = 5000;
@@ -72,7 +73,10 @@ export class BuildMetricsListener {
             }
             
             const logPath = path.join(tracesDir, 'build_metrics.jsonl');
-            this.appendWriter = new AppendOnlyWriter(logPath);
+            // DROP_OLDEST strategy for non-critical data (metrics)
+            this.appendWriter = new AppendOnlyWriter(logPath, {
+              overflowStrategy: OverflowStrategy.DROP_OLDEST
+            });
         }
         
         // ✅ FIXED: Store disposables
@@ -200,8 +204,16 @@ export class BuildMetricsListener {
     
     /**
      * Queue metrics for batched flush
+     * 
+     * NEW: Drop oldest if queue is full (FIFO)
      */
     private async queueMetrics(metrics: BuildMetrics): Promise<void> {
+        // NEW: Drop oldest if full
+        if (this.pendingMetrics.length >= this.MAX_PENDING_METRICS) {
+            this.pendingMetrics.shift(); // Drop oldest (FIFO)
+            this.logger?.warning(`[BuildMetricsListener] Queue full, dropping oldest metric`);
+        }
+        
         this.pendingMetrics.push(metrics);
         if (!this.metricsFlushTimer) {
             this.metricsFlushTimer = setTimeout(() => {

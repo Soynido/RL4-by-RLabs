@@ -7,7 +7,7 @@
  * 1. FirstUse génère Plan/Tasks/Context.RL4
  * 2. Ground Truth sauvegarde des copies YAML dans ground_truth/
  * 3. Ces fichiers sont IMMUTABLES (jamais modifiés)
- * 4. BiasCalculator compare Plan.RL4 actuel vs ground_truth/Plan.yaml
+ * 4. DEPRECATED: BiasCalculator removed (violation Loi 1) - Drift detection should be done by LLM via prompts
  * 
  * Structure :
  * .reasoning_rl4/ground_truth/

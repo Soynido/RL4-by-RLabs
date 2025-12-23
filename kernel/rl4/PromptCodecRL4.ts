@@ -7,6 +7,9 @@
  */
 
 import * as crypto from "crypto";
+import { RCEPEncoder } from "./codec/RCEP_Encoder";
+import { RCEPDecoder } from "./codec/RCEP_Decoder";
+import { PromptContext as RCEPPromptContext } from "./codec/RCEP_Types";
 
 /* --------------------------------------------------------------------------
  * RCEP Version
@@ -181,16 +184,82 @@ export class PromptCodecRL4 {
    * Encode a PromptContext → RCEP encoded string
    */
   encode(ctx: PromptContext, pretty: boolean = false): RCEPBlob {
-    // Implementation arrives in PHASE 2
-    throw new RCEPEncodeError("encode() not implemented (Phase 1 skeleton)");
+    // Convert PromptContext (PromptCodecRL4 type) to RCEPPromptContext (RCEP_Types)
+    const rcepContext: RCEPPromptContext = {
+      layers: ctx.layers.map(l => l.name),
+      topics: ctx.topics.map(t => t.name),
+      events: ctx.timeline.map(e => ({ id: e.id, time: e.time, type: e.type, ptr: e.ptr })),
+      decisions: ctx.decisions.map(d => ({ id: d.id, type: d.type, weight: d.weight, inputs: d.inputs })),
+      insights: ctx.insights.map(i => ({ id: i.id, type: i.type, salience: i.salience, links: i.links })),
+      humanSummary: ctx.humanSummary?.text
+    };
+    
+    // Encode using RCEPEncoder
+    const rcepString = RCEPEncoder.encode(rcepContext);
+    
+    // Calculate checksum
+    const checksum = this.sha256(rcepString);
+    
+    return {
+      version: this.version,
+      content: rcepString,
+      checksum,
+      minified: rcepString,
+      pretty: pretty ? rcepString : rcepString
+    };
   }
 
   /**
    * Decode RCEP string → PromptContext
    */
   decode(rcep: string): PromptContext {
-    // Implementation arrives in PHASE 2
-    throw new RCEPDecodeError("decode() not implemented (Phase 1 skeleton)");
+    // Decode using RCEPDecoder (returns RCEPPromptContext)
+    const rcepContext = RCEPDecoder.decode(rcep);
+    
+    // Convert RCEPPromptContext (RCEP_Types) to PromptContext (PromptCodecRL4 type)
+    return {
+      metadata: {
+        sessionId: 'decoded',
+        llmModel: 'unknown',
+        contextWindow: 8000,
+        encodingTime: Date.now(),
+        ptrScheme: 'mil-his-v1'
+      },
+      layers: (rcepContext.layers || []).map((name, idx) => ({
+        id: idx,
+        name,
+        weight: 500,
+        parent: 'ROOT' as const
+      })),
+      topics: (rcepContext.topics || []).map((name, idx) => ({
+        id: idx,
+        name,
+        weight: 500,
+        refs: []
+      })),
+      timeline: (rcepContext.events || []).map((e: any, idx: number) => ({
+        id: e.id || idx,
+        time: e.time || Date.now(),
+        type: e.type || 'query' as const,
+        ptr: e.ptr || ''
+      })),
+      decisions: (rcepContext.decisions || []).map((d: any, idx: number) => ({
+        id: d.id || idx,
+        type: d.type || 'accept' as const,
+        weight: d.weight || 500,
+        inputs: d.inputs || []
+      })),
+      insights: (rcepContext.insights || []).map((i: any, idx: number) => ({
+        id: i.id || idx,
+        type: i.type || 'pattern' as const,
+        salience: i.salience || 500,
+        links: i.links || []
+      })),
+      humanSummary: rcepContext.humanSummary ? {
+        type: 'brief' as const,
+        text: rcepContext.humanSummary
+      } : undefined
+    };
   }
 
   /**

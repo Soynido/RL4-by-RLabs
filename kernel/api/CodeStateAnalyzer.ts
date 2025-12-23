@@ -20,7 +20,7 @@ import { RL4Dictionary } from "../legacy/rl4/RL4Dictionary";
  *
  * This module provides:
  *   1. UnifiedPromptBuilder → a concise, objective "workspace state block"
- *   2. HistorySummarizer → context about churn / hotspots
+ *   2. DEPRECATED: HistorySummarizer removed (violation Loi 1)
  *   3. ActivityReconstructor → file impact analysis
  *   4. PromptOptimizer → code-density weighting
  *   5. Future MIL/HIS → stable pointers describing structural code sections

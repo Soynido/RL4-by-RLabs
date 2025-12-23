@@ -12,12 +12,12 @@ const getVsCodeApi = () => {
 const vscode = getVsCodeApi();
 
 export function useTimeMachine() {
-  const tmStartDate = useStore((s) => s.tmStartDate);
-  const tmEndDate = useStore((s) => s.tmEndDate);
-  const tmLoading = useStore((s) => s.tmLoading);
+  const startDate = useStore((s) => s.startDate);
+  const endDate = useStore((s) => s.endDate);
+  const loading = useStore((s) => s.loading);
   const setTMLoading = useStore((s) => s.setTMLoading);
-  const setTMStartDate = useStore((s) => s.setTMStartDate);
-  const setTMEndDate = useStore((s) => s.setTMEndDate);
+  const setStartDate = useStore((s) => s.setStartDate);
+  const setEndDate = useStore((s) => s.setEndDate);
 
   const buildPrompt = (start: string, end: string) => {
     setTMLoading(true);

@@ -12,7 +12,7 @@ const getVsCodeApi = () => {
 const vscode = getVsCodeApi();
 
 export function useSnapshot() {
-  const prompt = useStore((s) => s.prompt);
+  const prompt = useStore((s) => s.snapshotPrompt);
   const loading = useStore((s) => s.loading);
   const lastSnapshotIso = useStore((s) => s.lastSnapshotIso);
   const filesChanged = useStore((s) => s.filesChanged);

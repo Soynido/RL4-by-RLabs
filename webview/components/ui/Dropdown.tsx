@@ -46,11 +46,22 @@ export const Dropdown: React.FC<DropdownProps> = ({
       <button
         type="button"
         className={`dropdown-trigger ${isOpen ? 'open' : ''}`}
-        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onClick={() => {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/09f2ae51-802d-4435-8f6e-9f9d34ac2bd6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Dropdown.tsx:onClick',message:'Dropdown clicked',data:{disabled,isOpen,value},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
+          if (!disabled) {
+            setIsOpen(!isOpen);
+          } else {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/09f2ae51-802d-4435-8f6e-9f9d34ac2bd6',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Dropdown.tsx:onClick',message:'Dropdown blocked',data:{disabled},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
+          }
+        }}
         disabled={disabled}
       >
         <span>{selectedOption.label}</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg className="dropdown-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <polyline points="6,9 12,15 18,9" />
         </svg>
       </button>

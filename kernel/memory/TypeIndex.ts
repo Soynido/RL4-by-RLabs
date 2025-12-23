@@ -13,6 +13,7 @@ export class TypeIndex {
     private indexPath: string;
     private flushTimer: NodeJS.Timeout | null = null;
     private dirty: boolean = false;
+    private flushInProgress: boolean = false;  // NEW: Prevent concurrent flushes
     
     constructor(workspaceRoot: string) {
         const memoryDir = path.join(workspaceRoot, '.reasoning_rl4', 'memory', 'indices');
@@ -46,21 +47,23 @@ export class TypeIndex {
     
     /**
      * Flush périodique
+     * NEW: Asynchronous
      */
     private startFlushTimer(): void {
-        this.flushTimer = setInterval(() => {
-            if (this.dirty) {
-                this.save();
+        this.flushTimer = setInterval(async () => {
+            if (this.dirty && !this.flushInProgress) {
+                await this.save();
             }
         }, 5000); // 5 secondes
     }
     
     /**
      * Flush manuel
+     * NEW: Asynchronous
      */
     async flush(): Promise<void> {
-        if (this.dirty) {
-            this.save();
+        if (this.dirty && !this.flushInProgress) {
+            await this.save();
         }
     }
     
@@ -83,20 +86,33 @@ export class TypeIndex {
         }
     }
     
-    private save(): void {
-        const dir = path.dirname(this.indexPath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+    /**
+     * NEW: Asynchronous save
+     */
+    private async save(): Promise<void> {
+        if (this.flushInProgress) return;
         
-        // Convertir Map en objet pour JSON
-        const data: Record<string, string[]> = {};
-        for (const [type, eventIds] of this.index.entries()) {
-            data[type] = Array.from(eventIds);
-        }
+        this.flushInProgress = true;
         
-        fs.writeFileSync(this.indexPath, JSON.stringify(data));
-        this.dirty = false;
+        try {
+            const dir = path.dirname(this.indexPath);
+            if (!fs.existsSync(dir)) {
+                await fs.promises.mkdir(dir, { recursive: true });
+            }
+            
+            // Convertir Map en objet pour JSON
+            const data: Record<string, string[]> = {};
+            for (const [type, eventIds] of this.index.entries()) {
+                data[type] = Array.from(eventIds);
+            }
+            
+            await fs.promises.writeFile(this.indexPath, JSON.stringify(data), 'utf-8');
+            this.dirty = false;
+        } catch (error) {
+            console.error(`[TypeIndex] Failed to save: ${error}`);
+        } finally {
+            this.flushInProgress = false;
+        }
     }
     
     async close(): Promise<void> {

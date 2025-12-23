@@ -14,6 +14,7 @@ export class TemporalIndex {
     private indexPath: string;
     private flushTimer: NodeJS.Timeout | null = null;
     private dirty: boolean = false;
+    private flushInProgress: boolean = false;  // NEW: Prevent concurrent flushes
     
     constructor(workspaceRoot: string) {
         const memoryDir = path.join(workspaceRoot, '.reasoning_rl4', 'memory', 'indices');
@@ -89,22 +90,24 @@ export class TemporalIndex {
     
     /**
      * CORRIGER: Flush périodique (pattern AppendOnlyWriter)
+     * NEW: Asynchronous flush
      */
     private startFlushTimer(): void {
-        this.flushTimer = setInterval(() => {
-            if (this.dirty) {
-                this.save();
+        this.flushTimer = setInterval(async () => {
+            if (this.dirty && !this.flushInProgress) {
+                await this.save();
             }
         }, 5000); // 5 secondes
     }
     
     /**
      * Flush manuel (appelé sur snapshot/shutdown)
+     * NEW: Asynchronous
      */
     async flush(): Promise<void> {
-        if (this.dirty) {
+        if (this.dirty && !this.flushInProgress) {
             this.ensureSorted();
-            this.save();
+            await this.save();
         }
     }
     
@@ -123,15 +126,28 @@ export class TemporalIndex {
         }
     }
     
-    private save(): void {
-        const dir = path.dirname(this.indexPath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+    /**
+     * NEW: Asynchronous save
+     */
+    private async save(): Promise<void> {
+        if (this.flushInProgress) return;
         
-        this.ensureSorted(); // Trier avant sauvegarde
-        fs.writeFileSync(this.indexPath, JSON.stringify(this.index));
-        this.dirty = false;
+        this.flushInProgress = true;
+        
+        try {
+            const dir = path.dirname(this.indexPath);
+            if (!fs.existsSync(dir)) {
+                await fs.promises.mkdir(dir, { recursive: true });
+            }
+            
+            this.ensureSorted(); // Trier avant sauvegarde
+            await fs.promises.writeFile(this.indexPath, JSON.stringify(this.index), 'utf-8');
+            this.dirty = false;
+        } catch (error) {
+            console.error(`[TemporalIndex] Failed to save: ${error}`);
+        } finally {
+            this.flushInProgress = false;
+        }
     }
     
     async close(): Promise<void> {

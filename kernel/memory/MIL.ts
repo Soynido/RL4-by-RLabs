@@ -2,7 +2,16 @@
  * MIL (Memory Index Layer) - Classe principale
  * 
  * L'hippocampe de RL4 : normalise, indexe et consolide tous les événements.
+ * 
+ * ⚠️ MIL INVARIANT (Loi 1) :
+ * - No semantic interpretation
+ * - No causal inference
+ * - No intention attribution
+ * - Only structure, indexing, and retrieval
+ * 
  * ZERO-INTELLIGENCE : Structure uniquement, pas d'inférence.
+ * 
+ * Référence : northstar.md Section 10.5, Risque R1
  */
 
 import * as fs from 'fs';
@@ -12,8 +21,10 @@ import { EventNormalizer } from './EventNormalizer';
 import { TemporalIndex } from './TemporalIndex';
 import { SpatialIndex } from './SpatialIndex';
 import { TypeIndex } from './TypeIndex';
-import { AppendOnlyWriter } from '../AppendOnlyWriter';
+import { AppendOnlyWriter, OverflowStrategy } from '../AppendOnlyWriter';
 import { GlobalClock } from '../GlobalClock';
+import { RotationManager } from '../persistence/RotationManager';
+import { MemoryClass } from './MemoryClass';
 
 export class MIL {
     private workspaceRoot: string;
@@ -26,6 +37,8 @@ export class MIL {
     private seqStatePath: string;
     private clock: GlobalClock;
     private eventCache: Map<string, UnifiedEvent> = new Map(); // Cache en mémoire pour accès rapide
+    private rotationManager?: RotationManager;
+    private rotationTimer?: NodeJS.Timeout;
     
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -38,7 +51,12 @@ export class MIL {
         }
         
         this.eventsPath = path.join(memoryDir, 'events.jsonl');
-        this.eventsWriter = new AppendOnlyWriter(this.eventsPath, { fsync: false, mkdirRecursive: true });
+        // BLOCK strategy for critical data (events)
+        this.eventsWriter = new AppendOnlyWriter(this.eventsPath, { 
+          fsync: false, 
+          mkdirRecursive: true,
+          overflowStrategy: OverflowStrategy.BLOCK
+        });
         
         this.temporalIndex = new TemporalIndex(workspaceRoot);
         this.spatialIndex = new SpatialIndex(workspaceRoot);
@@ -53,6 +71,49 @@ export class MIL {
     async init(): Promise<void> {
         await this.eventsWriter.init();
         this.initializeSeq();
+        
+        // NEW: Initialize rotation manager
+        this.rotationManager = new RotationManager(
+            this.workspaceRoot,
+            {
+                maxFileSizeMB: 100,
+                maxAgeDays: 90,
+                enableArchiving: false,
+                enableCompression: false,
+                memoryClass: MemoryClass.WARM  // WARM car events.jsonl peut être purgé
+            },
+            this  // Pass MIL for event indexing
+        );
+        
+        // Check rotation on startup
+        await this.checkRotation();
+        
+        // Start periodic rotation check
+        this.startRotationTimer();
+    }
+    
+    /**
+     * NEW: Check and rotate events.jsonl if needed
+     */
+    private async checkRotation(): Promise<void> {
+        if (!this.rotationManager) return;
+        
+        if (this.rotationManager.shouldRotate(this.eventsPath).shouldRotate) {
+            const result = await this.rotationManager.rotateFile(this.eventsPath);
+            // Retention events already indexed via RotationManager
+            if (result.errors.length > 0) {
+                console.warn(`[MIL] Rotation errors: ${result.errors.join(', ')}`);
+            }
+        }
+    }
+    
+    /**
+     * NEW: Periodic rotation check (every hour)
+     */
+    private startRotationTimer(): void {
+        this.rotationTimer = setInterval(async () => {
+            await this.checkRotation();
+        }, 3600000); // 1 hour
     }
     
     /**
@@ -300,24 +361,24 @@ export class MIL {
             return queries;
         }
         
-        // Détecter patterns basiques
+        // Détection mécanique uniquement (pas d'interprétation)
         const hasCommits = events.some(e => e.type === EventType.GIT_COMMIT);
         const hasFileChanges = events.some(e => e.type.startsWith('file_'));
         const hasChat = events.some(e => e.source === EventSource.CURSOR_CHAT);
         
         if (hasCommits) {
-            queries.push('What architectural decisions were made in this period?');
+            queries.push('List all commits with their timestamps and file changes');
         }
         
         if (hasFileChanges && hasCommits) {
-            queries.push('What causal relationships exist between file changes and commits?');
+            queries.push('List all file changes and commits in chronological order');
         }
         
         if (hasChat) {
-            queries.push('What development patterns emerge from the chat history?');
+            queries.push('List all chat messages with their timestamps');
         }
         
-        queries.push('Generate concise summary of this development episode');
+        queries.push('Generate a chronological summary of events');
         
         return queries;
     }
@@ -356,6 +417,12 @@ export class MIL {
      * Fermer MIL (flush tous les indices)
      */
     async close(): Promise<void> {
+        // Clear rotation timer
+        if (this.rotationTimer) {
+            clearInterval(this.rotationTimer);
+            this.rotationTimer = undefined;
+        }
+        
         this.persistSeq();
         await this.temporalIndex.close();
         await this.spatialIndex.close();

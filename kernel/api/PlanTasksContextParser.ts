@@ -786,5 +786,98 @@ ${data.observations.length > 0 ? `## Observations\n${data.observations.map(o => 
       violations
     };
   }
+
+  /**
+   * Get active task count from Tasks.RL4
+   */
+  async getActiveTaskCount(): Promise<number> {
+    try {
+      const tasksData = this.parseTasks();
+      if (!tasksData) {
+        return 0;
+      }
+      return tasksData.active.length;
+    } catch (error) {
+      console.error('[PlanTasksContextParser] Failed to get active task count:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Calculate plan drift (how much the current state deviates from the plan)
+   */
+  async calculatePlanDrift(): Promise<{ severity: string; drift: number; details: any }> {
+    try {
+      const plan = this.parsePlan();
+      const tasks = this.parseTasks();
+      const context = this.parseContext();
+
+      if (!plan || !tasks || !context) {
+        return {
+          severity: 'UNKNOWN',
+          drift: 0,
+          details: { reason: 'Missing plan/tasks/context data' }
+        };
+      }
+
+      // Calculate drift based on:
+      // 1. Timeline progress vs expected
+      // 2. Task completion rate
+      // 3. Confidence level from context
+
+      const now = new Date();
+      const targetDate = plan.timeline?.target ? new Date(plan.timeline.target) : null;
+      const startDate = plan.timeline?.start ? new Date(plan.timeline.start) : null;
+
+      let drift = 0;
+      let severity = 'LOW';
+
+      // Timeline drift
+      if (targetDate && startDate) {
+        const totalDuration = targetDate.getTime() - startDate.getTime();
+        const elapsed = now.getTime() - startDate.getTime();
+        const expectedProgress = Math.min(elapsed / totalDuration, 1.0);
+        
+        // Estimate actual progress from task completion
+        const totalTasks = tasks.active.length + tasks.completed.length;
+        const completedTasks = tasks.completed.length;
+        const actualProgress = totalTasks > 0 ? completedTasks / totalTasks : 0;
+
+        drift = Math.abs(expectedProgress - actualProgress) * 100;
+
+        if (drift > 50) {
+          severity = 'CRITICAL';
+        } else if (drift > 30) {
+          severity = 'HIGH';
+        } else if (drift > 15) {
+          severity = 'MEDIUM';
+        }
+      }
+
+      // Confidence-based adjustment
+      if (context.confidence !== undefined) {
+        const confidenceDrift = (1 - context.confidence) * 100;
+        drift = Math.max(drift, confidenceDrift);
+      }
+
+      return {
+        severity,
+        drift: Math.round(drift * 100) / 100,
+        details: {
+          activeTasks: tasks.active.length,
+          completedTasks: tasks.completed.length,
+          confidence: context.confidence,
+          timeline: plan.timeline
+        }
+      };
+    } catch (error) {
+      console.error('[PlanTasksContextParser] Failed to calculate plan drift:', error);
+      return {
+        severity: 'UNKNOWN',
+        drift: 0,
+        details: { error: String(error) }
+      };
+    }
+  }
 }
 

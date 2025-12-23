@@ -38,7 +38,6 @@ interface CaptureEvent {
  * - Real-time file watching (via chokidar)
  * - Pattern detection (refactor, feature, fix, test, docs)
  * - Change correlation (related files modified together)
- * - Feed into PatternLearningEngine
  * - Burst detection (multiple files changed rapidly)
  */
 export class FileChangeWatcher {

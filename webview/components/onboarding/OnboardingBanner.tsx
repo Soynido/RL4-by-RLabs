@@ -1,8 +1,20 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useStore } from '../../state/store';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { StepIndicator } from './StepIndicator';
 import { HintsList } from './HintsList';
+
+const getVsCodeApi = () => {
+  if (window.vscode) return window.vscode;
+  if (window.acquireVsCodeApi) {
+    window.vscode = window.acquireVsCodeApi();
+    return window.vscode;
+  }
+  return { postMessage: (msg: any) => console.log('[mock postMessage]', msg) };
+};
+
+const vscode = getVsCodeApi();
 
 export interface OnboardingBannerProps {
   mode: 'standard' | 'extended';
@@ -23,7 +35,19 @@ const EXTENDED_HINTS = [
 
 export const OnboardingBanner: React.FC<OnboardingBannerProps> = ({ mode, onDismiss }) => {
   const isExtended = mode === 'extended';
-  const hints = isExtended ? EXTENDED_HINTS : STANDARD_HINTS;
+  const kernelHints = useStore((s) => s.onboardingHints);
+  
+  // Request hints from kernel on mount if extended mode
+  useEffect(() => {
+    if (isExtended) {
+      vscode.postMessage({ type: 'rl4:getOnboardingHints' });
+    }
+  }, [isExtended]);
+
+  // Use kernel hints if available, otherwise fallback to static hints
+  const hints = kernelHints.length > 0 
+    ? kernelHints.map((h: any) => h.body || h.title || String(h))
+    : (isExtended ? EXTENDED_HINTS : STANDARD_HINTS);
 
   return (
     <Card className="onboarding-banner" highlight="cyan">

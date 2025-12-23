@@ -86,7 +86,7 @@ export interface KernelStatus {
 
 // Slice contracts
 export interface UISlice {
-  activeTab: 'control' | 'dev' | 'timemachine' | 'insights' | 'about';
+  activeTab: 'control' | 'dev' | 'timemachine' | 'insights' | 'about' | 'rebuild';
   theme: 'ghost' | 'mint' | 'uv';
   kernelReady: boolean;
   bootPhase: 'booting' | 'detecting' | 'hydrating' | 'ready' | 'error';
@@ -105,10 +105,14 @@ export interface WorkspaceSlice {
   mode: GovernanceMode;
   onboardingComplete: boolean;
   onboardingStep: number;
+  onboardingHints: any[];
+  rebuildResult: { success: boolean; cyclesIndexed?: number } | null;
   setWorkspace: (ws: WorkspaceStateFromKernel | null) => void;
   setMode: (mode: GovernanceMode) => void;
   setOnboardingComplete: (complete: boolean) => void;
   setOnboardingStep: (step: number) => void;
+  setOnboardingHints: (hints: any[]) => void;
+  setRebuildResult: (result: { success: boolean; cyclesIndexed?: number } | null) => void;
 }
 
 export interface DevSlice {
@@ -143,7 +147,7 @@ export interface TimeMachineSlice {
   minDate: string | null;
   maxDate: string;
   loading: boolean;
-  prompt: string | null;
+  timeMachinePrompt: string | null;
   error: string | null;
   setStartDate: (v: string) => void;
   setEndDate: (v: string) => void;
@@ -156,7 +160,7 @@ export interface TimeMachineSlice {
 
 export interface SnapshotSlice {
   loading: boolean;
-  prompt: string | null;
+  snapshotPrompt: string | null;
   lastSnapshotIso: string | null;
   filesChanged: number;
   success: boolean;

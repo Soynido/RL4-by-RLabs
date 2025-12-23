@@ -11,14 +11,14 @@ export function createTimeMachineSlice(set: SetState, _get: GetState): TimeMachi
     minDate: null,
     maxDate: todayIso,
     loading: false,
-    prompt: null,
+    timeMachinePrompt: null,
     error: null,
     setStartDate: (v: string) => set({ startDate: v }),
     setEndDate: (v: string) => set({ endDate: v }),
     setMinDate: (v: string | null) => set({ minDate: v }),
     setMaxDate: (v: string) => set({ maxDate: v }),
     setTMLoading: (v: boolean) => set({ loading: v }),
-    setTMPrompt: (p: string | null) => set({ prompt: p }),
+    setTMPrompt: (p: string | null) => set({ timeMachinePrompt: p }),
     setTMError: (e: string | null) => set({ error: e }),
   };
 }

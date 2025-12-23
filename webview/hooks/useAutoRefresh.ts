@@ -21,19 +21,30 @@ const REFRESH_INTERVALS = {
 export function useAutoRefresh() {
   const timersRef = useRef<Record<string, any>>({});
 
+  // Helper function to refresh data with error handling
+  const refreshData = (dataType: string) => {
+    try {
+      const messageType = `rl4:${dataType}`;
+      vscode.postMessage({ type: messageType, payload: {} });
+    } catch (error) {
+      console.warn(`[AutoRefresh] Failed to refresh ${dataType}:`, error);
+    }
+  };
+
   useEffect(() => {
     timersRef.current.autoTasks = setInterval(() => {
-      vscode.postMessage({ type: 'rl4:getAutoTasksCount' });
+      refreshData('getAutoTasksCount');
     }, REFRESH_INTERVALS.autoTasksCount);
 
     timersRef.current.insights = setInterval(() => {
-      vscode.postMessage({ type: 'rl4:getInsights' });
+      refreshData('getInsights');
     }, REFRESH_INTERVALS.insights);
 
     const unsubSnapshot = eventBus.on('snapshot:complete', () => {
-      vscode.postMessage({ type: 'rl4:getInsights' });
-      vscode.postMessage({ type: 'rl4:getLocalTasks' });
-      vscode.postMessage({ type: 'rl4:getAutoTasksCount' });
+      // Refresh all relevant data after snapshot
+      refreshData('getInsights');
+      refreshData('getLocalTasks');
+      refreshData('getAutoTasksCount');
     });
 
     return () => {

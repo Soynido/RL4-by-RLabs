@@ -3,10 +3,19 @@ import * as path from 'path';
 import { KernelAPI } from './kernel/KernelAPI';
 import { KernelCommands } from './commands/KernelCommands';
 import { RL4Commands } from './commands/RL4Commands';
+
+// VERY EARLY LOGGING - This should appear immediately when extension loads
+console.error('🔥🔥🔥 RL4 EXTENSION MODULE LOADED - EXTREME EARLY LOGGING 🔥🔥🔥');
+console.error('Timestamp:', new Date().toISOString());
+console.error('Process PID:', process.pid);
+
+if (typeof window !== 'undefined') {
+  console.error('Window object exists:', !!window);
+}
 import { ADRValidationCommands } from './commands/ADRValidationCommands';
 import { TerminalTrackingCommands } from './commands/TerminalTrackingCommands';
 import { RL4ActivityBarProvider } from './RL4ActivityBarProvider';
-import { RL4WebViewManager } from './webview/RL4WebViewManager';
+import { RL4WebViewManager } from './RL4WebViewManager';
 import { KernelBridge } from './kernel/process/KernelBridge';
 import { detectWorkspaceState } from './kernel/onboarding/OnboardingDetector';
 import { loadKernelConfig } from './kernel/config';
@@ -39,6 +48,8 @@ let ideActivityListener: IDEActivityListener | null = null;
 let buildMetricsListener: BuildMetricsListener | null = null;
 // ✅ Fix 2: Création UNIQUE du channel dans extension.ts
 let outputChannel: vscode.OutputChannel;
+// ✅ P0.3: Auto-open timeout reference for cleanup
+let autoOpenTimeout: NodeJS.Timeout | null = null;
 
 export async function activate(context: vscode.ExtensionContext) {
     // 🔥 VERSION CHECK — Preuve runtime que l'activation est appelée
@@ -64,6 +75,9 @@ export async function activate(context: vscode.ExtensionContext) {
         // Initialize CognitiveLogger (ne crée plus de channel, utilise celui passé)
         logger = new CognitiveLogger(workspaceRoot, 'normal');
         logger.system('RL4 Extension activating...');
+        
+        // ✅ Memory leak testing: Log memory on activation
+        logger.logMemoryUsage('activate');
 
         logger.system(`Workspace root: ${workspaceRoot}`);
 
@@ -142,17 +156,105 @@ export async function activate(context: vscode.ExtensionContext) {
         ADRValidationCommands.registerCommands(context, workspaceRoot, logger);
         logger.success('ADR validation commands registered');
 
-        // Step 10: Initialize Activity Bar Provider
+        // Step 10: Register RL4 LLM Response Processing Command
+        const processLLMResponseCommand = vscode.commands.registerCommand('rl4.processLLMResponse', async () => {
+            const response = await vscode.window.showInputBox({
+                prompt: 'Paste the LLM response containing decisions (```json:decisions block)',
+                placeHolder: 'Paste LLM response here...',
+                ignoreFocusOut: true
+            });
+            
+            if (!response) {
+                return;
+            }
+            
+            // Get RCEP ref from metadata (if available) or prompt user
+            const rcepRef = await vscode.window.showInputBox({
+                prompt: 'Enter RCEP reference (checksum) for this response',
+                placeHolder: 'rcep_checksum...',
+                ignoreFocusOut: true
+            });
+            
+            if (!rcepRef) {
+                vscode.window.showWarningMessage('RL4: RCEP reference is required for decision extraction');
+                return;
+            }
+            
+            try {
+                const result = await kernelAPI.processLLMResponse(response, rcepRef);
+                
+                if (result.decisions && result.decisions.length > 0) {
+                    // Check for low confidence decisions
+                    const lowConfidenceDecisions = result.decisions.filter((d: any) => 
+                        d.intent?.includes('rl4_update') && d.confidence_llm < 95
+                    );
+                    
+                    if (lowConfidenceDecisions.length > 0) {
+                        vscode.window.showWarningMessage(
+                            `RL4: ${lowConfidenceDecisions.length} decision(s) with confidence < 95% for RL4 updates were rejected`
+                        );
+                    }
+                    
+                    vscode.window.showInformationMessage(
+                        `RL4: ${result.count} decision(s) extracted and stored successfully`
+                    );
+                } else {
+                    vscode.window.showInformationMessage('RL4: No decisions found in LLM response');
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`RL4: Failed to process LLM response: ${error.message}`);
+                logger?.error?.(`Failed to process LLM response: ${error}`);
+            }
+        });
+        context.subscriptions.push(processLLMResponseCommand);
+
+        // Step 11: Initialize Activity Bar Provider
         activityBarProvider = new RL4ActivityBarProvider(context, kernelAPI);
         activityBarProvider.register();
         context.subscriptions.push(activityBarProvider);
 
-        // Step 11: Initialize WebView Manager
+        // Step 12: Initialize WebView Manager
         webViewManager = new RL4WebViewManager(context, kernelAPI);
+        
+        // Register openWebview command (primary command for opening webview)
+        const openWebviewCommand = vscode.commands.registerCommand('rl4.openWebview', () => {
+            webViewManager?.show();
+        });
+        context.subscriptions.push(openWebviewCommand);
+        
+        // Register toggleWebview command (for backward compatibility)
         const toggleWebviewCommand = vscode.commands.registerCommand('rl4.toggleWebview', () => {
             webViewManager?.show();
         });
         context.subscriptions.push(toggleWebviewCommand);
+        
+        // Auto-open webview on activation
+        console.warn('=== RL4 EXTENSION ACTIVATED === About to auto-open webview');
+        console.warn('RL4 Extension PID:', process.pid);
+        console.warn('RL4 WebView Manager:', webViewManager ? 'EXISTS' : 'NULL');
+
+        // Also log to VS Code output channel for redundancy
+        logger?.system('=== ABOUT TO AUTO-OPEN WEBVIEW ===');
+        logger?.system(`WebView Manager exists: ${webViewManager ? 'YES' : 'NO'}`);
+
+        // ✅ P0.3: Store timeout reference for cleanup
+        autoOpenTimeout = setTimeout(() => {
+            console.warn('=== RL4 AUTO-OPEN TRIGGERED ===');
+            console.warn('Calling webViewManager.show()...');
+            logger?.system('=== AUTO-OPEN TIMEOUT TRIGGERED ===');
+
+            if (webViewManager) {
+                console.warn('✅ webViewManager.show() called successfully');
+                logger?.system('Calling webViewManager.show()...');
+                webViewManager.show();
+                logger?.system('✅ webViewManager.show() completed');
+            } else {
+                console.error('❌ webViewManager is NULL!');
+                logger?.error('❌ WebViewManager is NULL during auto-open!');
+            }
+            logger?.system('RL4 Webview opened automatically on activation');
+            autoOpenTimeout = null; // Clear reference after execution
+        }, 1000);
 
         // Install RL4 governance rules for LLM calibration
         try {
@@ -190,12 +292,22 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
     if (logger) {
+        // ✅ Memory leak testing: Log memory before cleanup
+        logger.logMemoryUsage('deactivate');
         logger.system('RL4 Extension deactivating...');
     }
 
     try {
+        // ✅ P0.3: Cleanup auto-open timeout if pending
+        if (autoOpenTimeout) {
+            clearTimeout(autoOpenTimeout);
+            autoOpenTimeout = null;
+        }
+
         // Cleanup kernel bridge and API
         if (kernelAPI) {
+            // ✅ P1.1: Dispose KernelAPI before shutdown to clean up listeners
+            kernelAPI.dispose();
             await kernelAPI.shutdown();
         }
         if (kernelBridge) {
@@ -395,13 +507,13 @@ function initializeStatusBar(context: vscode.ExtensionContext) {
     );
     
     statusBarItem.text = '$(brain) RL4';
-    statusBarItem.tooltip = 'Reasoning Layer 4 - Kernel running';
-    statusBarItem.command = 'rl4.showOutput';
+    statusBarItem.tooltip = 'Open RL4 Dashboard';
+    statusBarItem.command = 'rl4.openWebview';
     statusBarItem.show();
     
     context.subscriptions.push(statusBarItem);
     
-    // ✅ Fix 2: Register command to show output (channel created in extension.ts)
+    // Register command to show output (channel created in extension.ts)
     const showOutputCommand = vscode.commands.registerCommand('rl4.showOutput', () => {
         if (outputChannel) {
             outputChannel.show(true);

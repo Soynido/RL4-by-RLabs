@@ -9,10 +9,13 @@ export function createWorkspaceSlice(set: SetState, _get: GetState): WorkspaceSl
     mode: 'strict',
     onboardingComplete: false,
     onboardingStep: 0,
+    onboardingHints: [],
+    rebuildResult: null,
     setWorkspace: (ws: WorkspaceStateFromKernel | null) => set({ workspace: ws }),
     setMode: (mode: GovernanceMode) => set({ mode }),
     setOnboardingComplete: (complete: boolean) => set({ onboardingComplete: complete }),
     setOnboardingStep: (step: number) => set({ onboardingStep: step }),
+    setOnboardingHints: (hints: any[]) => set({ onboardingHints: hints }),
+    setRebuildResult: (result: any) => set({ rebuildResult: result }),
   };
 }
-

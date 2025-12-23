@@ -37,6 +37,11 @@ const handlers: Record<string, MessageHandler> = {
       eventBus.emit('mode:changed', payload.mode);
     }
   },
+  themeChanged: (payload) => {
+    if (payload?.theme) {
+      useStore.getState().setTheme(payload.theme);
+    }
+  },
   kernelStatus: (_payload) => {
     useStore.getState().setKernelReady(true);
     useStore.getState().setBootPhase('ready');
@@ -87,6 +92,17 @@ const handlers: Record<string, MessageHandler> = {
     if (payload?.firstCycleIso) useStore.getState().setMinDate(payload.firstCycleIso);
     if (payload?.lastCycleIso) useStore.getState().setMaxDate(payload.lastCycleIso);
   },
+
+  // Onboarding
+  onboardingHints: (payload) => {
+    useStore.getState().setOnboardingHints(payload?.hints || []);
+  },
+
+  // Rebuild
+  rebuildComplete: (payload) => {
+    // Store rebuild result for UI feedback
+    useStore.getState().setRebuildResult(payload);
+  },
 };
 
 export function dispatchMessage(type: string, payload: any): void {
@@ -101,4 +117,3 @@ export function dispatchMessage(type: string, payload: any): void {
     console.warn(`[MessageRouter] Unknown message type: ${type}`);
   }
 }
-

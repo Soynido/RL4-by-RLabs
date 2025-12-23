@@ -1,6 +1,5 @@
 import { BaseMessage } from "../legacy/rl4/RL4Messages";
 import { UnifiedPromptBuilder } from "./UnifiedPromptBuilder";
-import { SummarizedHistory, BiasReport } from "./BiasCalculator";
 import { EnrichedADRSignal } from "./ADRSignalEnricher";
 import { ParsedADR } from "./ADRParser";
 import { CycleContextV1 } from "../core/CycleContextV1";
@@ -11,8 +10,6 @@ import { PromptCodecRL4, PromptContext, Layer, Topic, TimelineEvent, Decision, I
 
 export interface OptimizationRequest {
     rawIntent: string;
-    history?: SummarizedHistory;
-    biasReport?: BiasReport;
     adrs?: EnrichedADRSignal[];
     cycleContext?: CycleContextV1;
     planningContext?: ParsedPlanningContext;
@@ -111,8 +108,8 @@ export class PromptOptimizer {
         // 6. Build human-readable optimized prompt
         const optimizedPrompt = this.buildOptimizedPrompt(request.rawIntent, prioritized);
 
-        // 7. Apply anti-drift corrections
-        const driftCorrected = this.applyDriftCorrection(optimizedPrompt, request.biasReport);
+        // 7. Apply anti-drift corrections (DEPRECATED: removed BiasCalculator)
+        const driftCorrected = optimizedPrompt;
 
         // 8. Calculate optimization metrics
         const metrics = this.calculatePromptMetrics(driftCorrected, request);
@@ -134,7 +131,7 @@ export class PromptOptimizer {
             optimizationScore: metrics.overallScore,
             contextEnrichment: {
                 injectedADRCount: prioritized.filter(f => f.type === "adr").length,
-                injectedHistoryEvents: prioritized.filter(f => f.type === "history").length,
+                injectedHistoryEvents: 0, // DEPRECATED: History removed (violation Loi 1)
                 injectedBlindSpots: prioritized.filter(f => f.type === "blindspot").length,
                 injectedPlanSlices: prioritized.filter(f => f.type === "plan").length,
             },
@@ -246,23 +243,8 @@ export class PromptOptimizer {
             }
         }
 
-        // History fragments - compressed relevant events
-        if (request.history?.events) {
-            const relevantEvents = request.history.events
-                .filter(e => e.importance > 0.4)
-                .slice(0, 10); // Limit to top 10 events
-
-            for (const event of relevantEvents) {
-                fragments.push({
-                    type: "history",
-                    relevance: event.importance,
-                    content: event.summary,
-                    source: `history:${event.id}`,
-                    priority: event.importance > 0.8 ? "high" : "medium",
-                    size: this.estimateTokens(event.summary)
-                });
-            }
-        }
+        // DEPRECATED: History fragments removed (violation Loi 1 - intelligence implicite)
+        // History summarization should be done by LLM via prompts, not kernel
 
         // Blind spot fragments - areas needing attention
         if (request.blindSpots) {
@@ -396,19 +378,9 @@ export class PromptOptimizer {
             context.topics.push(topic);
         }
 
-        // Build timeline from history and planning events
+        // Build timeline from planning events
+        // DEPRECATED: History events removed (violation Loi 1)
         let eventId = 0;
-        if (request.history?.events) {
-            for (const event of request.history.events.slice(0, 20)) {
-                const timelineEvent: TimelineEvent = {
-                    id: eventId++,
-                    time: typeof event.timestamp === 'number' ? event.timestamp : Date.now(),
-                    type: "reflection",
-                    ptr: `HISTORY:${event.id}`
-                };
-                context.timeline.push(timelineEvent);
-            }
-        }
 
         // Build decisions from ADRs
         if (request.adrs) {
@@ -506,13 +478,13 @@ export class PromptOptimizer {
             sections.push("");
         }
 
-        // 4. Historical context
-        const history = fragments.filter(f => f.type === "history");
-        if (history.length > 0) {
-            sections.push("## RECENT ACTIVITY CONTEXT");
-            sections.push(...history.map(f => `- ${f.content}`));
-            sections.push("");
-        }
+        // DEPRECATED: Historical context removed (violation Loi 1)
+        // const history = fragments.filter(f => f.type === "history");
+        // if (history.length > 0) {
+        //     sections.push("## RECENT ACTIVITY CONTEXT");
+        //     sections.push(...history.map(f => `- ${f.content}`));
+        //     sections.push("");
+        // }
 
         // 5. Blind spots and warnings
         const blindspots = fragments.filter(f => f.type === "blindspot");
@@ -531,33 +503,9 @@ export class PromptOptimizer {
 
     /****************************************************************************************
      * DRIFT CORRECTION
-     * Applies bias correction based on drift analysis
+     * DEPRECATED: Removed (violation Loi 1 - intelligence implicite)
+     * Drift correction should be done by LLM via prompts, not kernel
      ****************************************************************************************/
-    private applyDriftCorrection(prompt: string, biasReport?: BiasReport): string {
-        if (!biasReport || biasReport.biasScore < 0.3) {
-            return prompt; // No significant drift to correct
-        }
-
-        const corrections = [];
-
-        if (biasReport.planAlignment < 0.4) {
-            corrections.push("⚠️ Note: This task appears to diverge from the current plan. Verify alignment before proceeding.");
-        }
-
-        if (biasReport.timelineAlignment < 0.3) {
-            corrections.push("⏰️ Context: This task hasn't been reflected in recent activity. Consider if timing is appropriate.");
-        }
-
-        if (biasReport.codeAlignment < 0.3) {
-            corrections.push("📁 Verify: Referenced files/structures should exist in the current codebase.");
-        }
-
-        if (corrections.length > 0) {
-            return prompt + "\n\n## DRIFT AWARENESS\n" + corrections.join("\n");
-        }
-
-        return prompt;
-    }
 
     /****************************************************************************************
      * METRICS CALCULATION
@@ -588,7 +536,7 @@ export class PromptOptimizer {
         const architecturalDepth = Math.min(1, archMatches.length / 5);
 
         // Overall optimization score
-        const contextRichness = request.history ? 0.2 : 0 + (request.adrs?.length || 0) * 0.1;
+        const contextRichness = (request.adrs?.length || 0) * 0.1;
         const overallScore = Math.min(1, (
             0.3 * lexicalDensity +
             0.2 * semanticComplexity +
@@ -598,7 +546,8 @@ export class PromptOptimizer {
         ));
 
         // Drift reduction estimate
-        const driftReduction = request.biasReport ? Math.min(1, request.biasReport.biasScore * 0.8) : 0;
+        // DEPRECATED: Bias report removed (violation Loi 1)
+        const driftReduction = 0;
 
         // Optimization signals
         const signals = [];
@@ -663,7 +612,7 @@ export class PromptOptimizer {
     private mapFragmentTypeToLayer(type: string): string {
         const mapping = {
             adr: "architectural_decisions",
-            history: "historical_context",
+            // history: "historical_context", // DEPRECATED: removed (violation Loi 1)
             blindspot: "blind_spots",
             plan: "planning_context",
             invariant: "constraints",
@@ -675,7 +624,7 @@ export class PromptOptimizer {
     private calculateLayerWeight(type: string, fragments: ContextFragment[]): number {
         const baseWeight = {
             adr: 800,
-            history: 600,
+            // history: 600, // DEPRECATED: removed (violation Loi 1)
             blindspot: 700,
             plan: 900,
             invariant: 850,
@@ -743,9 +692,10 @@ export class PromptOptimizer {
         // Calculate original approximate size before RCEP compression
         let size = request.rawIntent.length;
 
-        if (request.history) {
-            size += JSON.stringify(request.history).length;
-        }
+        // DEPRECATED: History size calculation removed (violation Loi 1)
+        // if (request.history) {
+        //     size += JSON.stringify(request.history).length;
+        // }
 
         if (request.adrs) {
             size += JSON.stringify(request.adrs).length;

@@ -31,16 +31,13 @@ export class RL4Commands {
             () => this.repairKernel()
         );
 
-        const toggleWebviewCommand = vscode.commands.registerCommand(
-            'rl4.toggleWebview',
-            () => this.toggleWebview()
-        );
+        // ❌ SUPPRIMÉ : rl4.toggleWebview est déjà enregistré dans extension.ts
+        // Ne pas enregistrer ici pour éviter le conflit
 
         context.subscriptions.push(
             openTerminalCommand,
             repairLedgerCommand,
-            repairKernelCommand,
-            toggleWebviewCommand
+            repairKernelCommand
         );
     }
 
@@ -165,20 +162,4 @@ export class RL4Commands {
         }
     }
 
-    private async toggleWebview() {
-        try {
-            // This would integrate with the webview panel
-            // For now, just show a message indicating the webview toggle
-            const message = 'RL4 Dashboard toggle requested';
-            vscode.window.showInformationMessage(message);
-            this.logger?.system('RL4 Dashboard toggle requested');
-
-            // TODO: Implement actual webview panel management
-            // This should create or show/hide the RL4 cognitive dashboard
-        } catch (error) {
-            const errorMsg = `Failed to toggle webview: ${error}`;
-            vscode.window.showErrorMessage(errorMsg);
-            this.logger?.error(errorMsg);
-        }
-    }
 }

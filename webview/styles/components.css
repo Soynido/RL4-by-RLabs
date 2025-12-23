@@ -12,7 +12,7 @@
   border: none;
 }
 
-.btn-primary {
+.btn-cta {
   background: var(--cta-gradient);
   color: white;
   box-shadow: var(--cta-shadow);
@@ -22,6 +22,11 @@
   background: var(--bg-surface);
   border: 1px solid var(--border-default);
   color: var(--text-secondary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 2px;
 }
 
 .dropdown {
@@ -39,7 +44,7 @@
   backdrop-filter: blur(20px);
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
   padding: 8px;
-  z-index: 100;
+  z-index: var(--z-dropdown);
   display: none;
 }
 
@@ -78,5 +83,26 @@
   border: 1px solid var(--severity-low-border);
   color: #a7f3d0;
   box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+}
+
+/* Card highlight variants */
+.card.highlight-high {
+  border-color: var(--severity-high-border);
+  box-shadow: 0 0 25px rgba(244, 114, 182, 0.25);
+}
+
+.card.highlight-medium {
+  border-color: var(--severity-medium-border);
+  box-shadow: 0 0 25px rgba(251, 191, 36, 0.2);
+}
+
+.card.highlight-low {
+  border-color: var(--severity-low-border);
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.2);
+}
+
+.card.highlight-cyan {
+  border-color: rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 25px rgba(34, 211, 238, 0.25);
 }
 

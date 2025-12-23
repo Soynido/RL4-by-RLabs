@@ -14,12 +14,21 @@ import { WriteTracker } from "./WriteTracker";
  * - fsync() optionnel pour renforcer la durabilité
  * - Gestion des erreurs courantes : EBUSY, EAGAIN, EMFILE
  * - Retry exponentiel (max 5 tentatives)
+ * - Queue bornée avec stratégie d'overflow configurable
  */
+
+export enum OverflowStrategy {
+    BLOCK = 'block',           // Wait until space available (for critical data)
+    DROP_OLDEST = 'drop_oldest', // Drop oldest entries (FIFO) - for non-critical data
+    DROP_NEWEST = 'drop_newest'  // Drop newest entries (LIFO) - for non-critical data
+}
 
 export interface AppendOnlyWriterOptions {
     fsync?: boolean;                 // Force disque
     mkdirRecursive?: boolean;        // Crée dossiers manquants
     maxRetries?: number;             // Retries en cas d'erreur
+    maxQueueSize?: number;           // NEW: Maximum queue size (default: 1000)
+    overflowStrategy?: OverflowStrategy;  // NEW: Strategy when queue is full
 }
 
 export class AppendOnlyWriter {
@@ -29,9 +38,13 @@ export class AppendOnlyWriter {
     private writing = false;
     private options: AppendOnlyWriterOptions;
     private writeTracker = WriteTracker.getInstance();
+    private readonly MAX_QUEUE_SIZE: number;
+    private readonly overflowStrategy: OverflowStrategy;
 
     constructor(filePath: string, options: AppendOnlyWriterOptions = {}) {
         this.filePath = filePath;
+        this.MAX_QUEUE_SIZE = options.maxQueueSize ?? 1000;
+        this.overflowStrategy = options.overflowStrategy ?? OverflowStrategy.BLOCK;
         this.options = {
             fsync: options.fsync ?? false,
             mkdirRecursive: options.mkdirRecursive ?? true,
@@ -56,6 +69,8 @@ export class AppendOnlyWriter {
 
     /**
      * Append un événement JSONL.
+     * 
+     * ⚠️ NEW: Handles queue overflow based on overflowStrategy
      */
     async append(value: any): Promise<void> {
         const line = JSON.stringify({
@@ -63,7 +78,37 @@ export class AppendOnlyWriter {
             timestamp: new Date().toISOString(),
         }) + "\n";
 
-        this.queue.push(line);
+        // NEW: Handle overflow based on strategy
+        if (this.queue.length >= this.MAX_QUEUE_SIZE) {
+            switch (this.overflowStrategy) {
+                case OverflowStrategy.BLOCK:
+                    // Wait until space available
+                    while (this.queue.length >= this.MAX_QUEUE_SIZE) {
+                        await new Promise(resolve => setTimeout(resolve, 10)); // 10ms backoff
+                    }
+                    break;
+                case OverflowStrategy.DROP_OLDEST:
+                    // Drop oldest (FIFO)
+                    this.queue.shift();
+                    console.warn(`[AppendOnlyWriter] Queue full, dropping oldest entry`);
+                    break;
+                case OverflowStrategy.DROP_NEWEST:
+                    // Don't add this line (drop newest)
+                    console.warn(`[AppendOnlyWriter] Queue full, dropping newest entry`);
+                    return; // Exit early, don't add to queue
+            }
+        }
+
+        // Add to queue (unless DROP_NEWEST strategy)
+        if (this.overflowStrategy !== OverflowStrategy.DROP_NEWEST) {
+            this.queue.push(line);
+        }
+
+        // Warning if queue > 80% capacity
+        if (this.queue.length > this.MAX_QUEUE_SIZE * 0.8) {
+            console.warn(`[AppendOnlyWriter] Queue at ${Math.round(this.queue.length / this.MAX_QUEUE_SIZE * 100)}% capacity`);
+        }
+
         return this.processQueue();
     }
 

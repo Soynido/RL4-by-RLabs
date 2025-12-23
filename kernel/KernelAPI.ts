@@ -50,6 +50,8 @@ export class KernelAPI {
     private pendingQueries: Map<number, { resolve: (value: any) => void; reject: (error: any) => void }> = new Map();
     private querySeq: number = 0;
     private extensionPath?: string;
+    // ✅ P1.1: Store bridge message listener reference for cleanup
+    private bridgeMessageListener?: (msg: any) => void;
 
     constructor(
         private bridge: KernelBridge,
@@ -58,8 +60,9 @@ export class KernelAPI {
         extensionPath?: string
     ) {
         this.extensionPath = extensionPath;
+        // ✅ P1.1: Store listener reference for cleanup
         // Listen to bridge messages for query responses
-        this.bridge.on('message', (msg: any) => {
+        this.bridgeMessageListener = (msg: any) => {
             if (msg.type === 'query_reply' && msg.query_seq !== undefined) {
                 const pending = this.pendingQueries.get(msg.query_seq);
                 if (pending) {
@@ -71,15 +74,22 @@ export class KernelAPI {
                     }
                 }
             }
-        });
+        };
+        this.bridge.on('message', this.bridgeMessageListener);
     }
     
     /**
      * Send query to kernel process and wait for reply
+     * ✅ P2: Default timeout increased to 30s for better reliability
      */
-    public async query(type: string, payload?: any, timeout: number = 5000): Promise<any> {
+    public async query(type: string, payload?: any, timeout: number = 30000): Promise<any> {
         if (!this.bridge.isRunning()) {
             throw new Error('Kernel is not running');
+        }
+
+        // ✅ P2: Warn if too many pending queries (potential leak)
+        if (this.pendingQueries.size > 10) {
+            this.logger.warning(`[KernelAPI] High number of pending queries (${this.pendingQueries.size}). Possible kernel unresponsiveness or memory leak.`);
         }
 
         // Wait for kernel to be ready before sending query (max 30s wait)
@@ -105,9 +115,10 @@ export class KernelAPI {
         };
 
         return new Promise((resolve, reject) => {
-            // Timeout handler
+            // ✅ P2: Timeout handler with cleanup
             const timeoutId = setTimeout(() => {
                 this.pendingQueries.delete(seq);
+                this.logger.warning(`[KernelAPI] Query timeout after ${timeout}ms: ${type}`);
                 reject(new Error(`Query timeout: ${type}`));
             }, timeout);
 
@@ -648,6 +659,64 @@ export class KernelAPI {
             this.logger.error(`[KernelAPI] Failed to get onboarding status: ${error}`);
             return { complete: false };
         }
+    }
+
+    /**
+     * Rebuild cache index from scratch
+     */
+    async rebuildCache(): Promise<{ success: boolean; cyclesIndexed: number }> {
+        try {
+            const data = await this.query('rebuild_cache');
+            return data || { success: false, cyclesIndexed: 0 };
+        } catch (error) {
+            this.logger.error(`[KernelAPI] Failed to rebuild cache: ${error}`);
+            return { success: false, cyclesIndexed: 0 };
+        }
+    }
+
+    /**
+     * Process LLM response and extract decisions
+     * 
+     * ⚠️ PHASE 4 : Extraction et stockage des décisions cognitives
+     */
+    public async processLLMResponse(response: string, rcepRef: string): Promise<{ decisions: any[]; count: number }> {
+        return await this.query('process_llm_response', { response, rcepRef });
+    }
+
+    /**
+     * Get decisions by time range
+     * 
+     * ⚠️ PHASE 10 : Récupération des décisions cognitives
+     */
+    public async getDecisions(startTime: number, endTime: number): Promise<{ decisions: any[]; count: number }> {
+        return await this.query('get_decisions', { startTime, endTime });
+    }
+
+    /**
+     * Replay a cognitive trajectory deterministically
+     * 
+     * ⚠️ PHASE 6 : Replay déterministe d'une trajectoire cognitive
+     */
+    public async replayTrajectory(startTime: number, endTime: number, anchorEventId?: string): Promise<{
+        events: any[];
+        decisions: any[];
+        hash: string;
+        timestamp: number;
+    }> {
+        return await this.query('replay_trajectory', { startTime, endTime, anchorEventId });
+    }
+
+    /**
+     * ✅ P1.1: Dispose method to clean up EventEmitter listener
+     * Idempotent - safe to call multiple times
+     */
+    public dispose(): void {
+        if (this.bridgeMessageListener) {
+            this.bridge.removeListener('message', this.bridgeMessageListener);
+            this.bridgeMessageListener = undefined;
+        }
+        // Clear pending queries to prevent memory leaks
+        this.pendingQueries.clear();
     }
 }
 

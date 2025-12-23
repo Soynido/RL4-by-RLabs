@@ -45,7 +45,8 @@ export enum EventType {
     // System events
     SYSTEM_START = 'system_start',
     SYSTEM_STOP = 'system_stop',
-    SYSTEM_ERROR = 'system_error'
+    SYSTEM_ERROR = 'system_error',
+    MEMORY_RETENTION = 'memory_retention'  // NEW: Memory retention events
 }
 
 /**

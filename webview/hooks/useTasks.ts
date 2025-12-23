@@ -1,5 +1,3 @@
-import { useStore } from '../state/store';
-
 const getVsCodeApi = () => {
   if (window.vscode) return window.vscode;
   if (window.acquireVsCodeApi) {
@@ -12,20 +10,20 @@ const getVsCodeApi = () => {
 const vscode = getVsCodeApi();
 
 export function useTasks() {
-  const addTask = (title: string) => {
-    // KernelAPI.addLocalTask expects a string, not an object
-    vscode.postMessage({
-      type: 'rl4:addLocalTask',
-      payload: { task: title },
-    });
+  const addTask = async (title: string) => {
+    try {
+      vscode.postMessage({ type: 'rl4:addLocalTask', payload: { task: title } });
+    } catch (error) {
+      console.warn('[useTasks] Failed to add task:', error);
+    }
   };
 
-  const toggleTask = (id: string, _completed: boolean) => {
-    // KernelAPI.toggleLocalTask only needs the id
-    vscode.postMessage({
-      type: 'rl4:toggleLocalTask',
-      payload: { id },
-    });
+  const toggleTask = async (id: string, _completed: boolean) => {
+    try {
+      vscode.postMessage({ type: 'rl4:toggleLocalTask', payload: { id } });
+    } catch (error) {
+      console.warn('[useTasks] Failed to toggle task:', error);
+    }
   };
 
   return {

@@ -68,13 +68,10 @@ export interface EnrichedCommit {
 import { PlanTasksContextParser, PlanData, TasksData, ContextData, WorkspaceData, KPIRecordLLM, KPIRecordKernel } from './PlanTasksContextParser';
 import { BlindSpotDataLoader, TimelinePeriod } from './BlindSpotDataLoader';
 import { ADRParser, ADRFromFile } from './ADRParser';
-import { HistorySummarizer, SummarizedHistory } from './HistorySummarizer';
-import { BiasCalculator, BiasReport } from './BiasCalculator';
 import { ADRSignalEnricher, EnrichedADRSignal } from './ADRSignalEnricher';
 import { ProjectAnalyzer, ProjectAnalysis } from './ProjectAnalyzer';
 import { ProjectDetector } from '../detection/ProjectDetector';
 import { PromptOptimizer, OptimizationRequest } from './PromptOptimizer';
-import { AnomalyDetector, Anomaly } from './AnomalyDetector';
 import { AppendOnlyWriter } from '../AppendOnlyWriter';
 import { ILogger } from '../core/ILogger';
 import { SnapshotDataSummaryComplete } from '../types/ExtendedTypes';
@@ -112,8 +109,7 @@ interface SnapshotData {
   tasks: TasksData | null;
   context: ContextData | null;
   adrs: any[];
-  historySummary: SummarizedHistory | null;
-  biasReport: BiasReport;
+  // DEPRECATED: historySummary, biasReport removed (violation Loi 1)
   confidence: number;
   bias: number;
   timeline: any[];
@@ -125,7 +121,7 @@ interface SnapshotData {
   enginePatterns: any[];
   engineCorrelations: any[];
   engineForecasts: any[];
-  anomalies: Anomaly[];
+  // DEPRECATED: anomalies removed (violation Loi 1)
   projectContext: ProjectAnalysis;
   detectedProject?: { name: string; description?: string; structure?: string };
   codeState: any;
@@ -161,9 +157,10 @@ export interface SnapshotMetadata {
   deviationMode: string;
   compressionRatio: number;
   dataHashes: { plan: string | null; tasks: string | null; context: string | null; ledger: string | null };
-  anomalies: any[];
+  // DEPRECATED: anomalies removed (violation Loi 1)
   compression: { originalSize: number; optimizedSize: number; reductionPercent: number; mode: string };
   rcepBlob?: string; // RCEP-encoded context
+  rcepChecksum?: string | null; // RCEP checksum for reference
   promptMetrics?: PromptGenerationMetrics;
   snapshot?: PromptSnapshot; // Phase 1: PromptSnapshot artefact (non-intrusive)
 }
@@ -178,8 +175,7 @@ interface PromptProfile {
     timeline: false | 'condensed' | 'complete' | 'extended';
     blindSpot: false | 'selective' | 'complete' | 'extended';
     engineData: 'minimal' | 'complete';
-    anomalies: 'critical' | 'medium,critical' | 'all';
-    historySummary: boolean;
+    // DEPRECATED: anomalies, historySummary removed (violation Loi 1)
     bootstrap: boolean;
   };
   compression: 'aggressive' | 'moderate' | 'minimal' | 'none';
@@ -192,41 +188,37 @@ export class UnifiedPromptBuilder {
   private planParser: PlanTasksContextParser;
   private blindSpotLoader: BlindSpotDataLoader;
   private adrParser: ADRParser;
-  private historySummarizer: HistorySummarizer;
-  private biasCalculator: BiasCalculator;
   private adrEnricher: ADRSignalEnricher;
   private projectAnalyzer: ProjectAnalyzer;
   private codeStateAnalyzer: CodeStateAnalyzer;
   private logger: ILogger | null;
   private promptOptimizer: PromptOptimizer;
-  private anomalyDetector: AnomalyDetector;
   private promptIntegrityValidator: PromptIntegrityValidator;
   private promptCodec: PromptCodecRL4;
   private snapshotValidator: PromptSnapshotValidator;
   private mil?: MIL;
+  private decisionStore?: any; // DecisionStore (importé dynamiquement pour éviter dépendance circulaire)
+  private rcepStore?: any; // RCEPStore (importé dynamiquement pour éviter dépendance circulaire)
+  private scfCompressor?: any; // SCFCompressor (importé dynamiquement pour éviter dépendance circulaire)
 
-  constructor(rl4Path: string, logger?: ILogger, mil?: MIL) {
+  constructor(rl4Path: string, logger?: ILogger, mil?: MIL, decisionStore?: any, rcepStore?: any, scfCompressor?: any) {
     this.rl4Path = rl4Path;
     this.workspaceRoot = path.dirname(rl4Path);
     this.planParser = new PlanTasksContextParser(rl4Path);
     this.blindSpotLoader = new BlindSpotDataLoader(rl4Path);
     this.adrParser = new ADRParser(this.workspaceRoot);
-    this.historySummarizer = new HistorySummarizer();
-    this.biasCalculator = new BiasCalculator();
     this.adrEnricher = new ADRSignalEnricher();
     this.projectAnalyzer = new ProjectAnalyzer(this.workspaceRoot);
     this.codeStateAnalyzer = new CodeStateAnalyzer();
     this.logger = logger || null;
     this.promptOptimizer = new PromptOptimizer(this.logger);
-    this.anomalyDetector = new AnomalyDetector(
-        this.workspaceRoot,
-        new AppendOnlyWriter(this.workspaceRoot),
-        this.logger
-      );
     this.promptIntegrityValidator = new PromptIntegrityValidator();
     this.promptCodec = new PromptCodecRL4();
     this.snapshotValidator = new PromptSnapshotValidator();
     this.mil = mil;
+    this.decisionStore = decisionStore;
+    this.rcepStore = rcepStore;
+    this.scfCompressor = scfCompressor;
   }
 
   private resolveMode(
@@ -258,8 +250,7 @@ export class UnifiedPromptBuilder {
         timeline: false,
         blindSpot: false,
         engineData: 'minimal',
-        anomalies: 'critical',
-        historySummary: false,
+        // DEPRECATED: anomalies, historySummary removed (violation Loi 1)
         bootstrap: false
       },
       compression: 'aggressive',
@@ -275,8 +266,7 @@ export class UnifiedPromptBuilder {
         timeline: 'condensed',
         blindSpot: 'selective',
         engineData: 'complete',
-        anomalies: 'medium,critical',
-        historySummary: false,
+        // DEPRECATED: anomalies, historySummary removed (violation Loi 1)
         bootstrap: false
       },
       compression: 'moderate',
@@ -292,8 +282,7 @@ export class UnifiedPromptBuilder {
         timeline: 'complete',
         blindSpot: 'complete',
         engineData: 'complete',
-        anomalies: 'all',
-        historySummary: false,
+        // DEPRECATED: anomalies, historySummary removed (violation Loi 1)
         bootstrap: false
       },
       compression: 'minimal',
@@ -309,8 +298,7 @@ export class UnifiedPromptBuilder {
         timeline: 'extended',
         blindSpot: 'extended',
         engineData: 'complete',
-        anomalies: 'all',
-        historySummary: true,
+        // DEPRECATED: anomalies, historySummary removed (violation Loi 1)
         bootstrap: false
       },
       compression: 'none',
@@ -326,8 +314,7 @@ export class UnifiedPromptBuilder {
         timeline: 'complete',
         blindSpot: 'complete',
         engineData: 'complete',
-        anomalies: 'all',
-        historySummary: false,
+        // DEPRECATED: anomalies, historySummary removed (violation Loi 1)
         bootstrap: true
       },
       compression: 'minimal',
@@ -340,7 +327,7 @@ export class UnifiedPromptBuilder {
    * @param deviationMode - User's perception angle (strict/flexible/exploratory/free/firstUse)
    * @param cycleContext - Optional cycle context
    * @param intent - Optional KernelIntent (Phase 0: accepted but ignored for backward-compat)
-   * @returns Prompt with metadata (anomalies, compression metrics, RCEP blob)
+   * @returns Prompt with metadata (compression metrics, RCEP blob)
    */
   async generate(
     deviationMode: 'strict' | 'flexible' | 'exploratory' | 'free' | 'firstUse' = 'flexible',
@@ -403,8 +390,7 @@ export class UnifiedPromptBuilder {
     // Create optimization request for PromptOptimizer v2
     const optimizationRequest: OptimizationRequest = {
       rawIntent: this.extractRawIntent(snapshotData),
-      history: this.convertHistoryForOptimizer(snapshotData),
-      biasReport: snapshotData.biasReport,
+      // DEPRECATED: history, biasReport removed (violation Loi 1)
       adrs: this.convertADRsForOptimizer(snapshotData),
       cycleContext,
       planningContext: this.convertPlanningForOptimizer(snapshotData),
@@ -422,6 +408,46 @@ export class UnifiedPromptBuilder {
     let prompt = optimizationResult.optimizedPrompt;
     const rcepBlob = optimizationResult.rcepBlob;
 
+    // ⚠️ PHASE 3 : Stocker RCEP blob dans RCEPStore (source de vérité)
+    let rcepChecksum: string | null = null;
+    if (this.rcepStore && rcepBlob) {
+      try {
+        rcepChecksum = this.rcepStore.calculateChecksumPublic(rcepBlob);
+        await this.rcepStore.store(rcepBlob, {
+          timestamp: Date.now(),
+          checksum: rcepChecksum
+        });
+        this.logger?.info?.(`[UnifiedPromptBuilder] RCEP blob stored with checksum: ${rcepChecksum}`);
+      } catch (error) {
+        this.logger?.error?.(`[UnifiedPromptBuilder] Failed to store RCEP blob: ${error}`);
+      }
+    }
+
+    // ⚠️ PHASE 7 : Compresser RCEP en SCF et décompresser en prompt final
+    let finalPrompt = prompt;
+    let scfGenerationId: string | undefined;
+    if (this.scfCompressor && rcepBlob && rcepChecksum) {
+      try {
+        // Décoder RCEP → PromptContext
+        const promptContext = this.promptCodec.decode(rcepBlob);
+        
+        // Compresser PromptContext → SCF
+        const anchorEventId = (snapshotData.metadata as any).anchorEventId;
+        const scf = await this.scfCompressor.compress(promptContext, anchorEventId);
+        scfGenerationId = scf.anchor.event_id;
+        
+        // Décompresser SCF → prompt final
+        finalPrompt = await this.scfCompressor.decompress(scf);
+        
+        this.logger?.info?.(`[UnifiedPromptBuilder] SCF compression and decompression applied.`);
+      } catch (error) {
+        this.logger?.error?.(`[UnifiedPromptBuilder] Failed to compress/decompress SCF: ${error}`);
+        // Fallback to original prompt
+      }
+    } else {
+      finalPrompt = prompt; // Fallback to original prompt if SCF not enabled/available
+    }
+
     // Add MIL context section if available (MVP: enrich prompt with unified events)
     if (snapshotData.milContext) {
       const milSection = this.formatMILContext(snapshotData.milContext);
@@ -434,6 +460,11 @@ export class UnifiedPromptBuilder {
         prompt = milSection + '\n\n' + prompt;
       }
     }
+
+    // ⚠️ PHASE 3 : Ajouter instructions cognitives strictes pour LLM
+    const cognitiveInstructions = this.formatCognitiveInstructions();
+    // Insérer avant la fin du prompt
+    prompt = prompt + '\n\n' + cognitiveInstructions;
 
     prompt = this.ensureSnapshotMarkers(prompt);
     const formatDuration = Date.now() - formatStart;
@@ -452,6 +483,7 @@ export class UnifiedPromptBuilder {
       mode: resolvedMode
     };
     snapshotData.metadata.rcepBlob = rcepBlob; // Store RCEP blob
+    snapshotData.metadata.rcepChecksum = rcepChecksum; // Store checksum for reference
     snapshotData.metadata.promptMetrics = {
       prompt_chars_original: originalSize,
       prompt_chars_optimized: optimizedSize,
@@ -490,9 +522,14 @@ export class UnifiedPromptBuilder {
       this.logger?.info?.(`Snapshot generated: ${prompt.length} chars, ${sections} sections`);
     }
 
+    // Add SCF generation ID to metadata if available
+    if (scfGenerationId) {
+      (snapshotData.metadata as any).scfGenerationId = scfGenerationId;
+    }
+
     // Return prompt with enriched metadata
     return {
-      prompt,
+      prompt: finalPrompt,
       metadata: snapshotData.metadata
     };
 
@@ -631,18 +668,8 @@ export class UnifiedPromptBuilder {
       }
     }
 
-    // Build timeline from history
+    // DEPRECATED: History timeline removed (violation Loi 1)
     let eventId = 0;
-    if (snapshotData.historySummary?.events) {
-      for (const event of snapshotData.historySummary.events.slice(0, 20)) {
-        context.timeline.push({
-          id: eventId++,
-          time: typeof event.timestamp === 'number' ? event.timestamp : Date.now(),
-          type: "reflection",
-          ptr: `HISTORY:${event.id}`
-        });
-      }
-    }
 
     // Build decisions from ADRs and bias report
     if (snapshotData.adrs) {
@@ -657,16 +684,8 @@ export class UnifiedPromptBuilder {
       }
     }
 
-    // Build insights from patterns and anomalies
-    if (snapshotData.anomalies && snapshotData.anomalies.length > 0) {
-      const insight: RCEPInsight = {
-        id: 0,
-        type: "anomaly",
-        salience: 900,
-        links: []
-      };
-      context.insights.push(insight);
-    }
+    // DEPRECATED: Anomalies insights removed (violation Loi 1)
+    // Anomaly detection should be done by LLM via prompts, not kernel
 
     // Add human summary if available
     if (snapshotData.plan?.goal) {
@@ -704,18 +723,8 @@ export class UnifiedPromptBuilder {
   /**
    * Convert history data for PromptOptimizer
    */
-  private convertHistoryForOptimizer(snapshotData: SnapshotData): any {
-    if (!snapshotData.historySummary) return undefined;
-
-    return {
-      events: (snapshotData.historySummary.events || []).map(event => ({
-        id: event.id,
-        summary: event.summary || "",
-        importance: event.importance || 0.5,
-        timestamp: event.timestamp || Date.now()
-      }))
-    };
-  }
+  // DEPRECATED: convertHistoryForOptimizer removed (violation Loi 1)
+  // History summarization should be done by LLM via prompts, not kernel
 
   /**
    * Convert ADRs for PromptOptimizer
@@ -909,13 +918,12 @@ export class UnifiedPromptBuilder {
       }
 
       // 2. Load compressed historical summary (if profile allows)
-      const historySummary = profile.sections.historySummary
-        ? await this.normalizeHistory(await this.historySummarizer.summarize([], this.workspaceRoot))
-        : null;
+      // DEPRECATED: historySummarizer removed (violation Loi 1)
+      const historySummary = null;
 
       // 3. Calculate bias and confidence
-      const biasMode = resolvedMode === 'firstUse' ? 'exploratory' : resolvedMode;
-      const biasReport = await this.calculateBias(biasMode);
+      // DEPRECATED: calculateBias removed (violation Loi 1)
+      const biasReport = { total: 0, planAlignment: 0, timelineAlignment: 0, patternAlignment: 0, codeAlignment: 0, signals: [] };
 
       // Get workspace reality for confidence calculation
       const timelinePeriod = this.getTimelinePeriod(profile.sections.timeline);
@@ -1012,11 +1020,12 @@ export class UnifiedPromptBuilder {
           eventLoopLag: healthTrends[healthTrends.length - 1]?.eventLoopLagP50 || 0
         },
         bias: bias,
-        planDrift: biasReport.total,
+        planDrift: 0, // DEPRECATED: biasReport removed (violation Loi 1)
         cognitiveLoad: 0
       };
 
-      const anomalies = this.anomalyDetector.detect([]);
+      // DEPRECATED: anomalyDetector removed (violation Loi 1)
+      const anomalies: any[] = [];
 
       // 11. Build complete snapshot data
       const snapshotData: SnapshotData = {
@@ -1024,8 +1033,7 @@ export class UnifiedPromptBuilder {
         tasks,
         context,
         adrs,
-        historySummary,
-        biasReport,
+        // DEPRECATED: historySummary, biasReport removed (violation Loi 1)
         confidence,
         bias,
         timeline,
@@ -1037,7 +1045,7 @@ export class UnifiedPromptBuilder {
         enginePatterns,
         engineCorrelations,
         engineForecasts,
-        anomalies,
+        // DEPRECATED: anomalies removed (violation Loi 1)
         projectContext,
         detectedProject: {
           name: detectedProject.metadata?.name || 'Unknown Project',
@@ -1065,7 +1073,7 @@ export class UnifiedPromptBuilder {
             context: context ? this.hashData(context) : null,
             ledger: cycleContext ? this.hashData(cycleContext) : null
           },
-          anomalies: anomalies,
+          // DEPRECATED: anomalies removed (violation Loi 1)
           compression: { originalSize: 0, optimizedSize: 0, reductionPercent: 0, mode: resolvedMode }
         },
         cycleContext,
@@ -1295,9 +1303,6 @@ export class UnifiedPromptBuilder {
     throw new Error("Not implemented: ProjectDetector.detect() method not available");
   }
 
-  private async calculateBias(mode: string): Promise<any> {
-    throw new Error("Not implemented: BiasCalculator.calculateBias() method not available");
-  }
 
   private loadWorkspaceContext(): WorkspaceContext {
     throw new Error("Not implemented: WorkspaceContext loading not implemented");
@@ -1327,9 +1332,6 @@ export class UnifiedPromptBuilder {
     throw new Error("Not implemented: ADRSignalEnricher.enrichCommits() method not available");
   }
 
-  private calculateBiasMetric(): number {
-    throw new Error("Not implemented: BiasCalculator.calculateBias() method not available");
-  }
 
   /**
    * Format MIL context for prompt inclusion
@@ -1386,6 +1388,58 @@ export class UnifiedPromptBuilder {
       section += `*(${events.length - 10} more events in this window)*\n\n`;
     }
 
+    return section;
+  }
+
+  /**
+   * ⚠️ PHASE 3 : Formatage des instructions cognitives strictes pour LLM
+   * 
+   * Instructions non-négociables pour génération de décisions cognitives :
+   * - Format JSON strict avec schéma DecisionSchema
+   * - confidence >= 95% pour RL4 updates
+   * - Jamais inventer context_refs
+   */
+  private formatCognitiveInstructions(): string {
+    let section = '## 🧠 COGNITIVE DECISION GENERATION (MANDATORY)\n\n';
+    
+    section += 'You MUST generate cognitive decisions in the following format:\n\n';
+    section += '```json:decisions\n';
+    section += '[\n';
+    section += '  {\n';
+    section += '    "id": "uuid-v4",\n';
+    section += '    "intent": "kernel_intent_id (MANDATORY)",\n';
+    section += '    "intent_text": "Human-readable intent",\n';
+    section += '    "context_refs": ["event_id_1", "event_id_2", "file_path"],\n';
+    section += '    "options_considered": [\n';
+    section += '      { "option": "...", "rationale": "...", "weight": 0-999 }\n';
+    section += '    ],\n';
+    section += '    "chosen_option": "...",\n';
+    section += '    "constraints": ["constraint1", "constraint2"],\n';
+    section += '    "invalidation_conditions": [\n';
+    section += '      { "condition": "...", "trigger_event_types": ["FILE_DELETE"], "severity": "critical" }\n';
+    section += '    ],\n';
+    section += '    "previous_decisions": ["decision_id_1"],\n';
+    section += '    "related_adrs": ["adr_id_1"],\n';
+    section += '    "confidence_llm": 95,  // 0-100 (MUST be >= 95 for RL4 updates)\n';
+    section += '    "validation_status": "pending",\n';
+    section += '    "rcep_ref": "rcep_checksum"\n';
+    section += '  }\n';
+    section += ']\n';
+    section += '```\n\n';
+    
+    section += '### ⚠️ NON-NEGOTIABLE RULES:\n\n';
+    section += '1. **Intent is MANDATORY**: Every decision MUST have a valid `intent` field.\n';
+    section += '2. **Confidence >= 95% for RL4 updates**: If `intent` includes `rl4_update`, `confidence_llm` MUST be >= 95.\n';
+    section += '3. **Never invent context_refs**: All `context_refs` MUST reference real event IDs, ADR IDs, or file paths from the context.\n';
+    section += '4. **Explicit options**: Always provide at least 2 options in `options_considered`.\n';
+    section += '5. **Invalidation conditions**: For critical decisions, specify `invalidation_conditions` that would invalidate the decision.\n';
+    section += '6. **Previous decisions**: Link to previous decisions that led to this one via `previous_decisions`.\n\n';
+    
+    section += '### ⚠️ VALIDATION:\n\n';
+    section += 'Decisions with `confidence_llm < 95%` for RL4 updates will be REJECTED.\n';
+    section += 'Decisions with invalid or missing `context_refs` will be REJECTED.\n';
+    section += 'Decisions without a valid `intent` will be REJECTED.\n\n';
+    
     return section;
   }
 }
